@@ -20,6 +20,12 @@ When a user requests a video, you probably want a controller that determines whe
 
 Generators will also be included that pin an HLS polyfill for browsers that don't support HLS natively, like Chrome and Firefox.
 
+## Support
+
+Support this project and [become a Superform pro](https://beautifulruby.com/phlex/forms/overview) by ordering the [Phlex on Rails video course](https://beautifulruby.com/phlex).
+
+[![](https://immutable.terminalwire.com/NgTt6nzO1aEnExV8j6ODuKt2iZpY74ZF8ecpUSCp4A0tXA0ErpJIS4cdMX0tQQKOWwZSl65jWnpzpgCLJThhhWtZJGr42XKt7WIi.png)](https://beautifulruby.com/phlex/forms/overview)
+
 ## Installation
 
 Install the gem and add to the application's Gemfile by executing:
