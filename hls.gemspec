@@ -8,7 +8,7 @@ Gem::Specification.new do |spec|
   spec.authors = ["Brad Gessler"]
   spec.email = ["bradgessler@gmail.com"]
 
-  spec.summary = "Create sane HLS video with a few commands and serve it up from an S3 object store "
+  spec.summary = "Create sane HLS video with a few commands and serve it up from an S3 object store."
   spec.description = spec.summary
   spec.homepage = "https://github.com/beautifulruby/hls"
   spec.required_ruby_version = ">= 3.1.0"
