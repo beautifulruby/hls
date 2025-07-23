@@ -1,6 +1,6 @@
 # HLS
 
-So you want to stream video from an object store like [Tigris](https://tigrisdata.com/) or [AWS S3](https://aws.amazon.com/s3/) from behind a paywall with pre-signed URLs? This gem provides sane defaults for encoding videos into HLS format and generates pre-signed URLs in m3u8 playlists.
+When I started working on the [Phlex on Rails video course](https://beautifulruby.com/phlex), I tried streaming mp4 files from an S3 compatible object store and quickly found out from users they were running into issues watching the video. I added to use [HLS](https://en.wikipedia.org/wiki/HTTP_Live_Streaming), but I quickly found out it's a bit of a pain setting that up on a private object store.
 
 ## Why?
 
@@ -22,7 +22,7 @@ Generators will also be included that pin an HLS polyfill for browsers that don'
 
 ## Support
 
-Support this project and [become a Superform pro](https://beautifulruby.com/phlex/forms/overview) by ordering the [Phlex on Rails video course](https://beautifulruby.com/phlex).
+Consider [buying a video course from Beautiful Ruby](https://beautifulruby.com) and learn a thing or two to keep the machine going that originally built this gem.
 
 [![](https://immutable.terminalwire.com/NgTt6nzO1aEnExV8j6ODuKt2iZpY74ZF8ecpUSCp4A0tXA0ErpJIS4cdMX0tQQKOWwZSl65jWnpzpgCLJThhhWtZJGr42XKt7WIi.png)](https://beautifulruby.com/phlex/forms/overview)
 
