@@ -162,11 +162,15 @@ module HLS
       def initialize(...)
         super(...)
 
-        # Registers common renditions for web
+        # 360p - Low quality for mobile/slow connections
         rendition width: 640,  height: 360,  bitrate: 500
+        # 480p - Standard definition for basic streaming
         rendition width: 854,  height: 480,  bitrate: 1000
+        # 720p - High definition for most desktop viewing
         rendition width: 1280, height: 720,  bitrate: 3000
+        # 1080p - Full HD for high-quality streaming
         rendition width: 1920, height: 1080, bitrate: 6000
+        # 4K - Ultra HD for premium viewing experience
         rendition width: 3840, height: 2160, bitrate: 12000
       end
     end
