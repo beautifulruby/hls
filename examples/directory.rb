@@ -28,13 +28,7 @@ HLS::Directory.new(source).glob("**/*.mp4").each do |input, path|
   # target = destination.join relative.dirname.join(relative.basename(input.extname))
   output = destination.join(path)
 
-  package = HLS::Package.new(input:, output:).tap do
-    it.rendition width: 640,  height: 360,  bitrate: 500
-    it.rendition width: 854,  height: 480,  bitrate: 1000
-    it.rendition width: 1280, height: 720,  bitrate: 3000
-    it.rendition width: 1920, height: 1080, bitrate: 6000
-    it.rendition width: 3840, height: 2160, bitrate: 12000
-  end
+  package = HLS::Package::Web.new(input:, output:)
 
   FileUtils.mkdir_p package.output
 
@@ -43,7 +37,7 @@ HLS::Directory.new(source).glob("**/*.mp4").each do |input, path|
 
     jobs.schedule do
       jobs.ffmpeg media.poster
-      jobs.ffmpeg p media.video
+      jobs.ffmpeg media.video
     end
   end
 end

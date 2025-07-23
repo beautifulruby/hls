@@ -143,17 +143,32 @@ module HLS
     end
   end
 
-  class Package
-    attr_reader :input, :output, :renditions
+  module Package
+    class Base
+      attr_reader :input, :output, :renditions
 
-    def initialize(input:, output:)
-      @input = input
-      @output = output
-      @renditions = []
+      def initialize(input:, output:)
+        @input = input
+        @output = output
+        @renditions = []
+      end
+
+      def rendition(**)
+        @renditions << Rendition.new(input:, output:, **)
+      end
     end
 
-    def rendition(**)
-      @renditions << Rendition.new(input:, output:, **)
+    class Web < Base
+      def initialize(...)
+        super(...)
+
+        # Registers common renditions for web
+        rendition width: 640,  height: 360,  bitrate: 500
+        rendition width: 854,  height: 480,  bitrate: 1000
+        rendition width: 1280, height: 720,  bitrate: 3000
+        rendition width: 1920, height: 1080, bitrate: 6000
+        rendition width: 3840, height: 2160, bitrate: 12000
+      end
     end
   end
 
