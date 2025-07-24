@@ -2,6 +2,7 @@ PATH
   remote: .
   specs:
     hls (0.1.0)
+      m3u8 (~> 0.8.0)
 
 GEM
   remote: https://rubygems.org/
@@ -14,6 +15,7 @@ GEM
       pp (>= 0.6.0)
       rdoc (>= 4.0.0)
       reline (>= 0.4.2)
+    m3u8 (0.8.2)
     pp (0.6.2)
       prettyprint
     prettyprint (0.2.0)

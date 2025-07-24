@@ -4,6 +4,7 @@ require_relative "hls/version"
 require "shellwords"
 require "pathname"
 require "json"
+require "m3u8"
 
 module HLS
   class Error < StandardError; end
