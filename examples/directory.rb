@@ -52,7 +52,7 @@ end
 
 jobs = Jobs.new
 
-HLS::Directory.new(source).glob("**/*.mp4").first.tap do |input, path|
+HLS::Directory.new(source).glob("**/*.mp4").each do |input, path|
   output = destination.join(path)
   FileUtils.mkdir_p(output)
 
@@ -60,22 +60,6 @@ HLS::Directory.new(source).glob("**/*.mp4").first.tap do |input, path|
   puts "Processing renditions for: #{input}"
 
   jobs.render package
-
-  manifest = HLS::Manifest::Generator.new(package.output.join("index.m3u8"))
-
-  parser = HLS::Manifest::Parser.from_json manifest.to_json
-
-  binding.irb
-
-  # parser = HLS::Manifest::Parser.new **package.manifest.serialize
-  # parser.renditions.each do |rendition|
-  #   rendition.playlist.items.each do |item|
-  #     item.segment = URI.join("http://example.com", rendition.path.join(item.segment).to_s).tap do |url|
-  #       url.query = "foo=bar"
-  #     end
-  #   end
-  #   binding.irb
-  # end
 end
 
-# jobs.process
+jobs.process

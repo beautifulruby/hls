@@ -144,54 +144,6 @@ module HLS
     end
   end
 
-  module Manifest
-    class Generator
-      attr_reader :package
-
-      VERSION = "1.0".freeze
-
-      def initialize(path)
-        @path = Pathname.new(path)
-        @playlist = M3u8::Reader.new.read path
-      end
-
-      def renditions
-        @playlist.items.each_with_object Hash.new do |item, hash|
-          hash[item.uri] = @path.dirname.join(item.uri).read
-        end
-      end
-
-      def serialize
-        {
-          version: VERSION,
-          playlist: @playlist.to_s,
-          renditions:
-        }
-      end
-      alias :to_h :serialize
-
-      def to_json
-        JSON.generate serialize
-      end
-    end
-
-    class Parser
-      VERSION = "1.0".freeze
-
-      attr_reader :version, :renditions
-
-      def initialize(version:, playlist:, renditions:, **)
-        @version = version
-        @playlist = M3u8::Reader.new.read playlist
-        @renditions = renditions.transform_values { M3u8::Reader.new.read it }
-      end
-
-      def self.from_json(json)
-        new(**JSON.parse(json, symbolize_names: true))
-      end
-    end
-  end
-
   class Directory
     def initialize(source)
       @source = Pathname.new(source)
