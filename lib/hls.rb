@@ -41,6 +41,8 @@ module HLS
     class Base
       attr_accessor :input, :output, :renditions
 
+      PLAYLIST = "index.m3u8".freeze
+
       Rendition = Data.define(:width, :height, :bitrate)
 
       def initialize(input:, output:)
@@ -65,7 +67,7 @@ module HLS
         [
           "-f", "hls",
           "-var_stream_map", stream_map,
-          "-master_pl_name", "index.m3u8",
+          "-master_pl_name", PLAYLIST,
           "-hls_time", "4",
           "-hls_playlist_type", "vod",
           "-hls_segment_filename", segment,
@@ -109,12 +111,16 @@ module HLS
         @renditions.each_index.map { |i| "v:#{i},a:#{i}" }.join(" ")
       end
 
+      def variant
+        @output.join("v:%v")
+      end
+
       def segment
-        @output.join("%v", "%d.ts").to_s
+        variant.join("%d.ts").to_s
       end
 
       def playlist
-        @output.join("%v", "index.m3u8").to_s
+        variant.join(PLAYLIST).to_s
       end
     end
 
