@@ -112,7 +112,7 @@ module HLS
       end
 
       def variant
-        @output.join("v:%v")
+        @output.join("%v")
       end
 
       def segment
