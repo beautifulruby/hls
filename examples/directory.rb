@@ -1,43 +1,61 @@
-
 require "bundler/inline"
 
 gemfile do
   source "https://rubygems.org"
 
-  # Include the local hls gem
   gem "hls", path: ".."
+  gem "parallel"
 end
 
 require "fileutils"
+require "pathname"
+require "etc"
+require "shellwords"
 
 storage = Pathname.new("/Users/bradgessler/Desktop")
 source = storage.join("Exports")
 destination = storage.join("Uploads")
 
-jobs = HLS::Pool.new
+CONCURRENCY = Etc.nprocessors / 2
 
-# Handle Ctrl+C gracefully
-Signal.trap("INT") do
-  puts "\nShutting down gracefully..."
-  jobs.shutdown
-  exit 0
+class Jobs
+  include Enumerable
+
+  def initialize
+    @jobs = []
+  end
+
+  def schedule(&job)
+    @jobs << job
+  end
+
+  def process(in_processes: CONCURRENCY, **options)
+    Parallel.each(@jobs, in_processes: in_processes, &:call)
+  end
+end
+
+jobs = Jobs.new
+
+def run_ffmpeg(task)
+  cmd = task.command.map(&:to_s)
+  puts "[#{task.class.name}] Running: #{Shellwords.join(cmd)}"
+  system(*cmd)
+  puts "[#{task.class.name}] Done"
 end
 
 HLS::Directory.new(source).glob("**/*.mp4").each do |input, path|
-  # relative = input.relative_path_from(source)
-  # target = destination.join relative.dirname.join(relative.basename(input.extname))
   output = destination.join(path)
+  FileUtils.mkdir_p(output)
 
   package = HLS::Package::Web.new(input:, output:)
-
-  FileUtils.mkdir_p package.output
+  puts "Processing renditions for: #{input}"
 
   package.renditions.each do |media|
-    FileUtils.mkdir_p media.output
+    FileUtils.mkdir_p(media.output)
 
     jobs.schedule do
-      jobs.ffmpeg media.poster
-      jobs.ffmpeg media.video
+      run_ffmpeg(media.poster)
+      run_ffmpeg(media.video)
     end
   end
 end
