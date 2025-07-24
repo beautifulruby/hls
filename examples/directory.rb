@@ -53,11 +53,13 @@ HLS::Directory.new(source).glob("**/*.mp4").each do |input, path|
   package.renditions.each do |media|
     FileUtils.mkdir_p(media.output)
 
-    jobs.schedule do
-      run_ffmpeg(media.poster)
-      run_ffmpeg(media.video)
-    end
+    # jobs.schedule do
+    #   run_ffmpeg(media.poster)
+    #   run_ffmpeg(media.video)
+    # end
   end
+
+  pp HLS::Manifest::Parser.from_json package.manifest.to_json
 end
 
 jobs.process

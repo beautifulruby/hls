@@ -3,6 +3,7 @@
 require_relative "hls/version"
 require "shellwords"
 require "pathname"
+require "json"
 
 module HLS
   class Error < StandardError; end
@@ -102,44 +103,57 @@ module HLS
     def video = Video.new(input:, output:, width:, height:, bitrate:)
   end
 
-  class Pool
-    def initialize(workers: 4)
-      @queue = Queue.new
-      @shutdown = false
-      @workers = Array.new(workers) do
-        Thread.new do
-          while !@shutdown && (job = @queue.pop)
-            break if job.nil? || @shutdown
-            job.call
+  module Manifest
+    class Generator
+      attr_reader :package
+
+      VERSION = "1.0".freeze
+
+      def initialize(package)
+        @package = package
+      end
+
+      def serialize
+        {
+          version: VERSION,
+          renditions: @package.renditions.map do
+            {
+              width: it.width,
+              height: it.height,
+              bitrate: it.bitrate,
+              playlist: it.video.playlist.read,
+              video_path: serialize_path(it.video.output),
+              poster_path: serialize_path(it.poster.output)
+            }
           end
-        end
+        }
+      end
+      alias :to_h :serialize
+
+      def to_json
+        JSON.generate serialize
+      end
+
+      private
+
+      def serialize_path(path)
+        path.relative_path_from(@package.output).to_s
       end
     end
 
-    def schedule(&task)
-      @queue << task unless @shutdown
-    end
+    class Parser
+      VERSION = "1.0".freeze
 
-    def ffmpeg(task)
-      shell(*task.command)
-    end
+      attr_reader :version, :renditions
 
-    def shell(*command)
-      return if @shutdown
-      Shellwords.join(command).tap do
-        puts it
-        system it
+      def initialize(data)
+        @version = data.fetch(:version)
+        @renditions = data.fetch(:renditions)
       end
-    end
 
-    def shutdown
-      @shutdown = true
-      @workers.size.times { @queue << nil } # poison pills
-    end
-
-    def process
-      @workers.size.times { @queue << nil } # poison pills
-      @workers.each(&:join)
+      def self.from_json(json)
+        new JSON.parse(json, symbolize_names: true)
+      end
     end
   end
 
@@ -155,6 +169,10 @@ module HLS
 
       def rendition(**)
         @renditions << Rendition.new(input:, output:, **)
+      end
+
+      def manifest
+        Manifest::Generator.new(self)
       end
     end
 
