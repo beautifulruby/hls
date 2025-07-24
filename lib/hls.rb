@@ -37,130 +37,11 @@ module HLS
     end
   end
 
-  class Video < Data.define(:input, :output, :width, :height, :bitrate)
-    def maxrate = bitrate * 2
-    def bufsize = bitrate * 2
-    def segment = output.join("%03d.ts")
-    def playlist = output.join("index.m3u8")
-
-    def command
-      [
-        # invoke ffmpeg
-        "ffmpeg",
-        # overwrite output files without confirmation
-        "-y",
-        # input video file
-        "-i", input,
-        # scale video to target resolution
-        "-vf", "scale=w=#{width}:h=#{height}:force_original_aspect_ratio=decrease",
-        # use Apple hardware-accelerated encoder
-        "-c:v", "h264_videotoolbox",
-        # average target video bitrate
-        "-b:v", "#{bitrate}k",
-        # cap video bitrate spikes (twice the target bitrate)
-        "-maxrate", "#{maxrate}k",
-        # buffer size for bitrate smoothing
-        "-bufsize", "#{bufsize}k",
-        # use AAC for audio
-        "-c:a", "aac",
-        # audio bitrate
-        "-b:a", "128k",
-        # audio sample rate
-        "-ar", "48000",
-        # set GOP size (e.g., 48 for 2s at 24fps)
-        "-g", "48",
-        # force minimum keyframe interval
-        "-keyint_min", "48",
-        # enable faststart for streaming before file is fully loaded
-        "-movflags", "+faststart",
-        # duration of each HLS segment in seconds
-        "-hls_time", "4",
-        # generate VOD-compatible HLS playlist
-        "-hls_playlist_type", "vod",
-        # pattern for naming segment files
-        "-hls_segment_filename", segment,
-        # output playlist file
-        playlist
-      ]
-    end
-  end
-
-  class Rendition
-    attr_reader :input, :output, :width, :height, :bitrate
-
-    def initialize(input:, output:, width:, height:, bitrate:)
-      @input = input
-      @output = output
-      @width = width
-      @height = height
-      @bitrate = bitrate
-      @output = output.join(name)
-    end
-
-    def resolution = "#{width}x#{height}"
-    def name = "#{height}p"
-
-    def poster = Poster.new(input:, output:, width:, height:)
-    def video = Video.new(input:, output:, width:, height:, bitrate:)
-  end
-
-  module Manifest
-    class Generator
-      attr_reader :package
-
-      VERSION = "1.0".freeze
-
-      def initialize(package)
-        @package = package
-      end
-
-      def serialize
-        {
-          version: VERSION,
-          renditions: @package.renditions.map do
-            {
-              width: it.width,
-              height: it.height,
-              bitrate: it.bitrate,
-              playlist: it.video.playlist.read,
-              video_path: serialize_path(it.video.output),
-              poster_path: serialize_path(it.poster.output)
-            }
-          end
-        }
-      end
-      alias :to_h :serialize
-
-      def to_json
-        JSON.generate serialize
-      end
-
-      private
-
-      def serialize_path(path)
-        path.relative_path_from(@package.output).to_s
-      end
-    end
-
-    class Parser
-      VERSION = "1.0".freeze
-
-      attr_reader :version, :renditions
-
-      def initialize(data)
-        @version = data.fetch(:version)
-        @renditions = data.fetch(:renditions)
-      end
-
-      def self.from_json(json)
-        new JSON.parse(json, symbolize_names: true)
-      end
-    end
-  end
-
-  module Package
+  module Video
     class Base
-      attr_reader :input, :output, :renditions
+      attr_accessor :input, :output, :renditions
+
+      Rendition = Data.define(:width, :height, :bitrate)
 
       def initialize(input:, output:)
         @input = input
@@ -168,19 +49,78 @@ module HLS
         @renditions = []
       end
 
-      def rendition(**)
-        @renditions << Rendition.new(input:, output:, **)
+      def rendition(...)
+        @renditions << Rendition.new(...)
       end
 
-      def manifest
-        Manifest::Generator.new(self)
+      def command
+        [
+          "ffmpeg",
+          "-y",
+          "-i", @input,
+          "-filter_complex", filter_complex
+        ] + \
+        video_maps + \
+        audio_maps + \
+        [
+          "-f", "hls",
+          "-var_stream_map", stream_map,
+          "-master_pl_name", "index.m3u8",
+          "-hls_time", "4",
+          "-hls_playlist_type", "vod",
+          "-hls_segment_filename", segment,
+          playlist
+        ]
+      end
+
+      private
+
+      def filter_complex
+        n = @renditions.size
+        parts = ["[0:v]split=#{n}#{(1..n).map { |i| "[v#{i}]" }.join}"]
+        parts += @renditions.each_with_index.map do |rendition, i|
+          "[v#{i + 1}]scale=w=#{rendition.width}:h=#{rendition.height}[v#{i + 1}out]"
+        end
+        parts.join("; ")
+      end
+
+      def video_maps(codec: "h264_videotoolbox")
+        @renditions.each_with_index.flat_map do |rendition, i|
+          [
+            "-map", "[v#{i + 1}out]",
+            "-c:v:#{i}", codec,
+            "-b:v:#{i}", "#{rendition.bitrate}k"
+          ]
+        end
+      end
+
+      def audio_maps(codec: "aac", bitrate: 128)
+        @renditions.each_with_index.flat_map do |_, i|
+          [
+            "-map", "a:0",
+            "-c:a:#{i}", codec,
+            "-b:a:#{i}", "#{bitrate}k",
+            "-ac", "2"
+          ]
+        end
+      end
+
+      def stream_map
+        @renditions.each_index.map { |i| "v:#{i},a:#{i}" }.join(" ")
+      end
+
+      def segment
+        @output.join("%v", "%d.ts").to_s
+      end
+
+      def playlist
+        @output.join("%v", "index.m3u8").to_s
       end
     end
 
     class Web < Base
       def initialize(...)
         super(...)
-
         # 360p - Low quality for mobile/slow connections
         rendition width: 640,  height: 360,  bitrate: 500
         # 480p - Standard definition for basic streaming
@@ -191,6 +131,63 @@ module HLS
         rendition width: 1920, height: 1080, bitrate: 6000
         # 4K - Ultra HD for premium viewing experience
         rendition width: 3840, height: 2160, bitrate: 12000
+      end
+    end
+
+    # Do very little work on vidoes so I can get more dev cycles in.
+    class Dev < Base
+      def initialize(...)
+        super(...)
+        # 360p - Low quality for mobile/slow connections
+        rendition width: 640,  height: 360,  bitrate: 500
+      end
+    end
+  end
+
+  module Manifest
+    class Generator
+      attr_reader :package
+
+      VERSION = "1.0".freeze
+
+      def initialize(path)
+        @path = Pathname.new(path)
+        @playlist = M3u8::Reader.new.read path
+      end
+
+      def renditions
+        @playlist.items.each_with_object Hash.new do |item, hash|
+          hash[item.uri] = @path.dirname.join(item.uri).read
+        end
+      end
+
+      def serialize
+        {
+          version: VERSION,
+          playlist: @playlist.to_s,
+          renditions:
+        }
+      end
+      alias :to_h :serialize
+
+      def to_json
+        JSON.generate serialize
+      end
+    end
+
+    class Parser
+      VERSION = "1.0".freeze
+
+      attr_reader :version, :renditions
+
+      def initialize(version:, playlist:, renditions:, **)
+        @version = version
+        @playlist = M3u8::Reader.new.read playlist
+        @renditions = renditions.transform_values { M3u8::Reader.new.read it }
+      end
+
+      def self.from_json(json)
+        new(**JSON.parse(json, symbolize_names: true))
       end
     end
   end
