@@ -46,9 +46,13 @@ module HLS
       Rendition = Data.define(:width, :height, :bitrate)
 
       def initialize(input:, output:)
-        @input = input
+        @input = Input.new(input)
         @output = output
         @renditions = []
+      end
+
+      def downscaleable_renditions
+        @renditions.select { |r| r.width <= input.width }
       end
 
       def rendition(...)
@@ -59,7 +63,7 @@ module HLS
         [
           "ffmpeg",
           "-y",
-          "-i", @input,
+          "-i", @input.path,
           "-filter_complex", filter_complex
         ] + \
         video_maps + \
@@ -78,16 +82,16 @@ module HLS
       private
 
       def filter_complex
-        n = @renditions.size
-        parts = ["[0:v]split=#{n}#{(1..n).map { |i| "[v#{i}]" }.join}"]
-        parts += @renditions.each_with_index.map do |rendition, i|
-          "[v#{i + 1}]scale=w=#{rendition.width}:h=#{rendition.height}[v#{i + 1}out]"
+        n = downscaleable_renditions.size
+        split = "[0:v]split=#{n}#{(1..n).map { |i| "[v#{i}]" }.join}"
+        scaled = downscaleable_renditions.each_with_index.map do |rendition, i|
+          "[v#{i + 1}]scale='if(gt(iw,#{rendition.width}),#{rendition.width},iw)':'if(gt(iw,#{rendition.width}),-2,ih)'[v#{i + 1}out]"
         end
-        parts.join("; ")
+        ([split] + scaled).join("; ")
       end
 
       def video_maps(codec: "h264_videotoolbox")
-        @renditions.each_with_index.flat_map do |rendition, i|
+        downscaleable_renditions.each_with_index.flat_map do |rendition, i|
           [
             "-map", "[v#{i + 1}out]",
             "-c:v:#{i}", codec,
@@ -97,7 +101,7 @@ module HLS
       end
 
       def audio_maps(codec: "aac", bitrate: 128)
-        @renditions.each_with_index.flat_map do |_, i|
+        downscaleable_renditions.each_with_index.flat_map do |_, i|
           [
             "-map", "a:0",
             "-c:a:#{i}", codec,
@@ -108,7 +112,7 @@ module HLS
       end
 
       def stream_map
-        @renditions.each_index.map { |i| "v:#{i},a:#{i}" }.join(" ")
+        downscaleable_renditions.each_index.map { |i| "v:#{i},a:#{i}" }.join(" ")
       end
 
       def variant
@@ -147,6 +151,46 @@ module HLS
         # 360p - Low quality for mobile/slow connections
         rendition width: 640,  height: 360,  bitrate: 500
       end
+    end
+  end
+
+  class Input
+    attr_reader :path, :json
+
+    def initialize(path)
+      @path = Pathname(path)
+    end
+
+    def json
+      @json ||= probe
+    end
+
+    def width      = stream.dig(:width)
+    def height     = stream.dig(:height)
+    def codec      = stream.dig(:codec_name)
+    def duration   = json.dig(:format, :duration)&.to_f
+    def framerate  = parse_rate(stream.dig(:r_frame_rate))
+
+    private
+
+    def stream
+      json.dig(:streams, 0)
+    end
+
+    def probe
+      raw = `ffprobe -v error -select_streams v:0 \
+        -show_entries stream=width,height,r_frame_rate,codec_name \
+        -show_entries format=duration \
+        -of json "#{@path}"`
+
+      JSON.parse(raw, symbolize_names: true)
+    end
+
+    def parse_rate(rate)
+      return unless rate
+      num, den = rate.split("/").map(&:to_f)
+      return if den.zero?
+      (num / den).round(3)
     end
   end
 

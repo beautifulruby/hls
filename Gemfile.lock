@@ -2,11 +2,13 @@ PATH
   remote: .
   specs:
     hls (0.1.0)
+      bigdecimal (~> 3.0)
       m3u8 (~> 0.8.0)
 
 GEM
   remote: https://rubygems.org/
   specs:
+    bigdecimal (3.2.2)
     date (3.4.1)
     diff-lcs (1.6.2)
     erb (5.0.2)
