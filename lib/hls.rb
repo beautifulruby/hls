@@ -38,19 +38,30 @@ module HLS
   end
 
   module Video
+    # Video quality presets with recommended bitrates (kilobits per second)
+    #
+    # Bitrate determines how much data is used per second of video - higher bitrates
+    # mean better quality but larger file sizes and more bandwidth needed for streaming.
+    # These values are industry-standard recommendations for different resolutions.
     module Bitrates
-      UHD_4K   = 15_000  # 3840x2160
-      QHD_1440 = 9_000   # 2560x1440
-      HD_1080  = 5_000   # 1920x1080
-      HD_720   = 2_500   # 1280x720
-      SD_480   = 1_200   # 854x480
-      SD_360   = 800     # 640x360
+      UHD_4K   = 15_000  # Ultra HD 4K (3840x2160) - Premium quality for large screens
+      QHD_1440 = 9_000   # Quad HD (2560x1440) - High quality for gaming/professional use
+      HD_1080  = 5_000   # Full HD (1920x1080) - Standard high-definition quality
+      HD_720   = 2_500   # HD Ready (1280x720) - Basic high-definition quality
+      SD_480   = 1_200   # Standard Definition (854x480) - DVD-like quality
+      SD_360   = 800     # Low Definition (640x360) - Mobile/slow connection quality
     end
 
+    # Bits per pixel ratios for different content types
+    #
+    # Different video content needs different amounts of data per pixel to look good.
+    # Motion-heavy content (action movies, sports) needs more bits per pixel than
+    # static content (screencasts, presentations) to avoid compression artifacts.
+    # These multipliers help calculate appropriate bitrates based on content type.
     module BitsPerPixel
-      SCREENCAST = 3
-      MIXED      = 4
-      MOTION     = 6
+      SCREENCAST = 3  # Static content: presentations, tutorials, minimal motion
+      MIXED      = 4  # Moderate motion: typical web videos, interviews
+      MOTION     = 6  # High motion: action videos, sports, fast-paced content
     end
 
     class Base
@@ -146,36 +157,6 @@ module HLS
           ]
         end
       end
-      def video_maps(codec: "libx264")
-        downscaleable_renditions.each_with_index.flat_map do |rendition, i|
-          [
-            # Use the scaled video stream from the filter for this quality level
-            "-map", "[v#{i + 1}out]",
-            # Use H.264 codec to compress the video (widely supported format)
-            "-c:v:#{i}", codec,
-            # Set the target data rate for the video in kilobits per second
-            "-b:v:#{i}", "#{rendition.bitrate}k",
-            # Prevent bitrate from exceeding 110% of target to avoid buffering issues
-            "-maxrate:v:#{i}", "#{(rendition.bitrate * 1.1).to_i}k",
-            # Set buffer size for smooth data rate control during encoding
-            "-bufsize:v:#{i}", "#{(rendition.bitrate * 2).to_i}k",
-            # Insert keyframes every 180 frames to align with 6-second segments at 30fps
-            "-g", "180",
-            # Enforce minimum gap of 180 frames between keyframes for consistency
-            "-keyint_min", "180",
-            # Ignore scene changes when placing keyframes to maintain regular intervals
-            "-sc_threshold", "0",
-            # Use H.264 high profile for better compression and quality
-            "-profile:v:#{i}", "high",
-            # Set H.264 level 4.1 for compatibility with most devices and players
-            "-level:v:#{i}", "4.1",
-            # Use slow encoding preset for better compression at cost of encoding time
-            "-preset:v:#{i}", "slow",
-            # Optimize encoding for animated content, text, and UI elements
-            "-tune:v:#{i}", "animation"
-          ]
-        end
-      end
 
       def audio_maps(codec: "aac", bitrate: 128)
         downscaleable_renditions.each_with_index.flat_map do |_, i|
@@ -211,7 +192,7 @@ module HLS
 
     # Encodes a video at the full size, half size, and quarter size for
     # reasonable streaming quality.
-    class Web < Base
+    class Scalable < Base
       BITS_PER_PIXEL = HLS::Video::BitsPerPixel::SCREENCAST
       MAX_BITRATE_KBPS = HLS::Video::Bitrates::UHD_4K
 

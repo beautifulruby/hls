@@ -56,7 +56,7 @@ HLS::Directory.new(source).glob("**/*.mp4").each do |input, path|
   output = destination.join(path)
   FileUtils.mkdir_p(output)
 
-  package = HLS::Video::Web.new(input:, output:)
+  package = HLS::Video::Scalable.new(input:, output:)
   puts "Processing renditions for: #{input}"
 
   jobs.render package
