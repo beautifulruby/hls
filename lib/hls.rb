@@ -21,17 +21,17 @@ module HLS
 
     def command
       [
-        # invoke ffmpeg
+        # Start the ffmpeg program to process video/audio files
         "ffmpeg",
-        # overwrite output files without confirmation
+        # Automatically overwrite output files if they already exist
         "-y",
-        # input video file
+        # Specify the input video file to read from
         "-i", input,
-        # scale video to target resolution
+        # Apply video filter to resize the video while maintaining aspect ratio
         "-vf", "scale=w=#{width}:h=#{height}:force_original_aspect_ratio=decrease",
-        # extract only one frame
+        # Extract only the first frame to create a still image
         "-frames:v", "1",
-        # output file path
+        # Save the extracted frame to this output file path
         output
       ]
     end
@@ -76,20 +76,31 @@ module HLS
 
       def command
         [
+          # Start the ffmpeg program to process video/audio files
           "ffmpeg",
+          # Automatically overwrite output files if they already exist
           "-y",
+          # Specify the input video file to read from
           "-i", @input.path,
+          # Use complex video filtering to create multiple scaled versions of the video
           "-filter_complex", filter_complex
         ] + \
         video_maps + \
         audio_maps + \
         [
+          # Set output format to HLS (HTTP Live Streaming) for web streaming
           "-f", "hls",
+          # Define which video and audio streams belong together for each quality level
           "-var_stream_map", stream_map,
+          # Set the filename for the main playlist that lists all quality options
           "-master_pl_name", PLAYLIST,
+          # Make each video segment 4 seconds long for smooth streaming
           "-hls_time", "4",
+          # Set playlist type for complete videos (not live streams)
           "-hls_playlist_type", "vod",
+          # Define naming pattern for individual video segment files
           "-hls_segment_filename", segment,
+          # Save the playlist files to this location
           playlist
         ]
       end
@@ -108,29 +119,29 @@ module HLS
       def video_maps(codec: "libx264")
         downscaleable_renditions.each_with_index.flat_map do |rendition, i|
           [
-            # Map the filtered video stream to the output index
+            # Use the scaled video stream from the filter for this quality level
             "-map", "[v#{i + 1}out]",
-            # Set the video codec
+            # Use H.264 codec to compress the video (widely supported format)
             "-c:v:#{i}", codec,
-            # Target average bitrate
+            # Set the target data rate for the video in kilobits per second
             "-b:v:#{i}", "#{rendition.bitrate}k",
-            # Cap maximum bitrate to avoid spikes and bloated chunks
+            # Prevent bitrate from exceeding 110% of target to avoid buffering issues
             "-maxrate:v:#{i}", "#{(rendition.bitrate * 1.1).to_i}k",
-            # Set buffer size for rate control stability
+            # Set buffer size for smooth data rate control during encoding
             "-bufsize:v:#{i}", "#{(rendition.bitrate * 2).to_i}k",
-            # Set GOP size to align keyframes with HLS segment boundaries (180 frames at 30fps = 6s)
+            # Insert keyframes every 180 frames to align with 6-second segments at 30fps
             "-g", "180",
-            # Minimum interval between keyframes
+            # Enforce minimum gap of 180 frames between keyframes for consistency
             "-keyint_min", "180",
-            # Disable scene change detection to enforce constant keyframe interval
+            # Ignore scene changes when placing keyframes to maintain regular intervals
             "-sc_threshold", "0",
-            # Set H.264 profile for broad device compatibility
+            # Use H.264 high profile for better compression and quality
             "-profile:v:#{i}", "high",
-            # Set H.264 level for playback compatibility
+            # Set H.264 level 4.1 for compatibility with most devices and players
             "-level:v:#{i}", "4.1",
-            # Trade speed for quality (slow = better compression)
+            # Use slow encoding preset for better compression at cost of encoding time
             "-preset:v:#{i}", "slow",
-            # Tune encoder for text, UI, and screen content
+            # Optimize encoding for animated content, text, and UI elements
             "-tune:v:#{i}", "animation"
           ]
         end
@@ -138,17 +149,29 @@ module HLS
       def video_maps(codec: "libx264")
         downscaleable_renditions.each_with_index.flat_map do |rendition, i|
           [
+            # Use the scaled video stream from the filter for this quality level
             "-map", "[v#{i + 1}out]",
+            # Use H.264 codec to compress the video (widely supported format)
             "-c:v:#{i}", codec,
+            # Set the target data rate for the video in kilobits per second
             "-b:v:#{i}", "#{rendition.bitrate}k",
+            # Prevent bitrate from exceeding 110% of target to avoid buffering issues
             "-maxrate:v:#{i}", "#{(rendition.bitrate * 1.1).to_i}k",
+            # Set buffer size for smooth data rate control during encoding
             "-bufsize:v:#{i}", "#{(rendition.bitrate * 2).to_i}k",
+            # Insert keyframes every 180 frames to align with 6-second segments at 30fps
             "-g", "180",
+            # Enforce minimum gap of 180 frames between keyframes for consistency
             "-keyint_min", "180",
+            # Ignore scene changes when placing keyframes to maintain regular intervals
             "-sc_threshold", "0",
+            # Use H.264 high profile for better compression and quality
             "-profile:v:#{i}", "high",
+            # Set H.264 level 4.1 for compatibility with most devices and players
             "-level:v:#{i}", "4.1",
+            # Use slow encoding preset for better compression at cost of encoding time
             "-preset:v:#{i}", "slow",
+            # Optimize encoding for animated content, text, and UI elements
             "-tune:v:#{i}", "animation"
           ]
         end
@@ -157,9 +180,13 @@ module HLS
       def audio_maps(codec: "aac", bitrate: 128)
         downscaleable_renditions.each_with_index.flat_map do |_, i|
           [
+            # Use the first audio track from the input file
             "-map", "a:0",
+            # Use AAC codec to compress audio (widely supported format)
             "-c:a:#{i}", codec,
+            # Set the audio data rate to 128 kilobits per second
             "-b:a:#{i}", "#{bitrate}k",
+            # Convert audio to stereo (2 channels) for consistent playback
             "-ac", "2"
           ]
         end
