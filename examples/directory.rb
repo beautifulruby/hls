@@ -13,7 +13,7 @@ require "etc"
 require "shellwords"
 require "uri"
 
-storage = Pathname.new("/Users/bradgessler/Desktop")
+storage = Pathname.new(ENV.fetch("SOURCE_PATH", "/Users/bradgessler/Desktop"))
 source = storage.join("Exports")
 destination = storage.join("Uploads")
 
@@ -52,7 +52,10 @@ end
 
 jobs = Jobs.new
 
-HLS::Directory.new(source).glob("**/*.mp4").each do |input, path|
+
+directory = HLS::Directory.new(source).glob("**/*.mp4")
+puts "Processing #{directory.count} files from #{source}"
+directory.each do |input, path|
   output = destination.join(path)
   FileUtils.mkdir_p(output)
 

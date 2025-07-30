@@ -64,6 +64,24 @@ module HLS
       MOTION     = 6  # High motion: action videos, sports, fast-paced content
     end
 
+    # Using VideoToolbox hardware acceleration for H.264 encoding
+    # - Significantly faster than software encoders like libx264
+    # - Optimized for macOS/iOS devices
+    # - Reduces CPU usage during encoding
+    VIDEO_CODEC = "h264_videotoolbox"
+
+    # AAC audio codec chosen for:
+    # - Excellent quality-to-size ratio
+    # - Universal compatibility across devices and browsers
+    # - Industry standard for streaming audio
+    AUDIO_CODEC = "aac"
+
+    # 128 kbps bitrate provides:
+    # - Good quality stereo audio for most content
+    # - Balanced file size for streaming
+    # - Widely used standard bitrate for web video
+    AUDIO_BITRATE = 128
+
     class Base
       attr_accessor :input, :output, :renditions
 
@@ -127,38 +145,50 @@ module HLS
         ([split] + scaled).join("; ")
       end
 
-      def video_maps(codec: "h264_videotoolbox")
+      def video_maps(codec: VIDEO_CODEC)
         downscaleable_renditions.each_with_index.flat_map do |rendition, i|
           [
-            # Use the scaled video stream from the filter for this quality level
+            # Select the scaled video stream from our filter_complex
             "-map", "[v#{i + 1}out]",
-            # Use H.264 codec to compress the video (widely supported format)
+            # Specify which video codec to use for this quality level
             "-c:v:#{i}", codec,
-            # Set the target data rate for the video in kilobits per second
+            # Set the target average bitrate for video quality
             "-b:v:#{i}", "#{rendition.bitrate}k",
-            # Prevent bitrate from exceeding 110% of target to avoid buffering issues
+            # Set a maximum bitrate cap (110% of target) to prevent bandwidth spikes
             "-maxrate:v:#{i}", "#{(rendition.bitrate * 1.1).to_i}k",
-            # Set buffer size for smooth data rate control during encoding
+            # Set the buffer size (2x target) for bitrate averaging over time
             "-bufsize:v:#{i}", "#{(rendition.bitrate * 2).to_i}k",
-            # Insert keyframes every 180 frames to align with 6-second segments at 30fps
+            # Set GOP (Group of Pictures) size to 180 frames (6 seconds at 30fps)
             "-g", "180",
-            # Enforce minimum gap of 180 frames between keyframes for consistency
+            # Force minimum distance between keyframes to match GOP size
             "-keyint_min", "180",
-            # Ignore scene changes when placing keyframes to maintain regular intervals
-            "-sc_threshold", "0",
-            # Use H.264 high profile for better compression and quality
-            "-profile:v:#{i}", "high",
-            # Set H.264 level 4.1 for compatibility with most devices and players
-            "-level:v:#{i}", "4.1",
-            # Use slow encoding preset for better compression at cost of encoding time
-            "-preset:v:#{i}", "slow",
-            # Optimize encoding for animated content, text, and UI elements
-            "-tune:v:#{i}", "animation"
-          ]
+            # Disable scene change detection to ensure consistent keyframe intervals for HLS
+            "-sc_threshold", "0"
+          ] + video_codec_options(codec, i, rendition.bitrate)
         end
       end
 
-      def audio_maps(codec: "aac", bitrate: 128)
+      def video_codec_options(codec, index, bitrate)
+        case codec
+        when "h264_videotoolbox"
+          [] # VideoToolbox handles most of this internally
+        when "libx264"
+          [
+            # Use 'high' profile for better compression efficiency
+            "-profile:v:#{index}", "high",
+            # Set H.264 level to 4.1 for broad device compatibility
+            "-level:v:#{index}", "4.1",
+            # Use 'slow' preset for better compression at expense of encoding time
+            "-preset:v:#{index}", "slow",
+            # Optimize encoding for animation/screencast content
+            "-tune:v:#{index}", "animation"
+          ]
+        else
+          []
+        end
+      end
+
+      def audio_maps(codec: AUDIO_CODEC, bitrate: AUDIO_BITRATE)
         downscaleable_renditions.each_with_index.flat_map do |_, i|
           [
             # Use the first audio track from the input file
