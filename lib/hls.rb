@@ -127,7 +127,7 @@ module HLS
         ([split] + scaled).join("; ")
       end
 
-      def video_maps(codec: "libx264")
+      def video_maps(codec: "h264_videotoolbox")
         downscaleable_renditions.each_with_index.flat_map do |rendition, i|
           [
             # Use the scaled video stream from the filter for this quality level
