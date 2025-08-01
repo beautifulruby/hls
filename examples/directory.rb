@@ -7,7 +7,6 @@ gemfile do
 end
 
 require "fileutils"
-require "uri"
 
 storage = Pathname.new(ENV.fetch("SOURCE_PATH", "/Users/bradgessler/Desktop"))
 source = storage.join("Exports")
