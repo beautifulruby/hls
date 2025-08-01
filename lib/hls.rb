@@ -12,11 +12,13 @@ module HLS
   class Poster
     attr_reader :input, :output, :width, :height
 
-    def initialize(input:, output:, width:, height:)
+    FILENAME = "poster.jpg"
+
+    def initialize(input:, output:, width: nil, height: nil)
       @input = input
-      @output = output.join("poster.jpg")
-      @width = width
-      @height = height
+      @output = output.join FILENAME
+      @width = width || input.width
+      @height = height || input.height
     end
 
     def command
@@ -26,7 +28,7 @@ module HLS
         # Automatically overwrite output files if they already exist
         "-y",
         # Specify the input video file to read from
-        "-i", input,
+        "-i", input.path,
         # Apply video filter to resize the video while maintaining aspect ratio
         "-vf", "scale=w=#{width}:h=#{height}:force_original_aspect_ratio=decrease",
         # Extract only the first frame to create a still image
@@ -90,7 +92,7 @@ module HLS
       Rendition = Data.define(:width, :height, :bitrate)
 
       def initialize(input:, output:)
-        @input = Input.new(input)
+        @input = input
         @output = output
         @renditions = []
       end
@@ -270,7 +272,7 @@ module HLS
     attr_reader :path, :json
 
     def initialize(path)
-      @path = Pathname(path)
+      @path = Pathname.new(path)
     end
 
     def json
@@ -306,9 +308,10 @@ module HLS
 
     def glob(glob)
       Enumerator.new do |y|
-        @source.glob(glob).each do |input|
-          relative = input.relative_path_from(@source)
-          output = relative.dirname.join(relative.basename(input.extname))
+        @source.glob(glob).each do |path|
+          relative = path.relative_path_from(@source)
+          output = relative.dirname.join(relative.basename(path.extname))
+          input = Input.new(path)
           y << [ input, output ]
         end
       end

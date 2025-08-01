@@ -32,7 +32,9 @@ class Jobs
 
   def render(rendition)
     schedule do
+      puts "[#{rendition}] Processing"
       ffmpeg rendition
+      puts "[#{rendition}] Done"
     end
   end
 
@@ -59,10 +61,15 @@ directory.each do |input, path|
   output = destination.join(path)
   FileUtils.mkdir_p(output)
 
-  package = HLS::Video::Scalable.new(input:, output:)
-  puts "Processing renditions for: #{input}"
+  puts "Processing #{input.path} to #{output}"
 
-  jobs.render package
+  package = HLS::Video::Scalable.new(input:, output:)
+  # jobs.render package
+
+  poster = HLS::Poster.new(input:, output:)
+  jobs.render poster
+
+  puts "Completed #{input.path} to #{output}"
 end
 
 jobs.process
