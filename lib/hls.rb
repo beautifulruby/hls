@@ -138,6 +138,10 @@ module HLS
         ]
       end
 
+      def playlist
+        variant.join(PLAYLIST)
+      end
+
       private
 
       def filter_complex
@@ -216,11 +220,7 @@ module HLS
       end
 
       def segment
-        variant.join("%d.ts").to_s
-      end
-
-      def playlist
-        variant.join(PLAYLIST).to_s
+        variant.join("%d.ts")
       end
     end
 
