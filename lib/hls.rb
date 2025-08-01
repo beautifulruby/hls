@@ -5,6 +5,8 @@ require "shellwords"
 require "pathname"
 require "json"
 require "m3u8"
+require "etc"
+require "parallel"
 
 module HLS
   class Error < StandardError; end
@@ -315,6 +317,47 @@ module HLS
           y << [ input, output ]
         end
       end
+    end
+  end
+
+  class Jobs
+    include Enumerable
+
+    def initialize
+      @jobs = []
+    end
+
+    def schedule(&job)
+      @jobs << job
+    end
+
+    def render(rendition)
+      schedule do
+        puts "[#{rendition}] Processing"
+        ffmpeg rendition
+        puts "[#{rendition}] Done"
+      end
+    end
+
+    def process(in_processes: self.class.in_processes)
+      Parallel.each(@jobs, in_processes:, &:call)
+    end
+
+    def self.process(&schedule)
+      Jobs.new.tap(&schedule).process
+    end
+
+    def self.in_processes
+      [Etc.nprocessors - 1, 1].max
+    end
+
+    private
+
+    def ffmpeg(task)
+      cmd = task.command.map(&:to_s)
+      puts "[#{task.class.name}] Running: #{Shellwords.join(cmd)}"
+      system(*cmd)
+      puts "[#{task.class.name}] Done"
     end
   end
 end
