@@ -23,6 +23,10 @@ module HLS
       @height = height || input.height
     end
 
+    def exist?
+      @output.exist?
+    end
+
     def command
       [
         # Start the ffmpeg program to process video/audio files
@@ -107,6 +111,10 @@ module HLS
         @renditions << Rendition.new(...)
       end
 
+      def exist?
+        @output.join(PLAYLIST).exist?
+      end
+
       def command
         [
           # Start the ffmpeg program to process video/audio files
@@ -136,10 +144,6 @@ module HLS
           # Save the playlist files to this location
           playlist
         ]
-      end
-
-      def playlist
-        variant.join(PLAYLIST)
       end
 
       private
@@ -220,7 +224,11 @@ module HLS
       end
 
       def segment
-        variant.join("%d.ts")
+        variant.join("%d.ts").to_s
+      end
+
+      def playlist
+        variant.join(PLAYLIST).to_s
       end
     end
 
