@@ -2,11 +2,16 @@
 
 require "aws-sdk-s3"
 require "digest"
+require "open3"
 require "pathname"
 require "set"
 require "shellwords"
 
+require "m3u8"
+
 require_relative "codecs"
+require_relative "instrumentation"
+require_relative "lock"
 require_relative "manifest"
 require_relative "state"
 require_relative "uploader"
@@ -179,13 +184,15 @@ module HLS
       # playlists.
       #
       #   CourseVideo.manifest("phlex/forms/overview").master_playlist
-      def manifest(path, expires_in: signing_ttl)
+      def manifest(path, expires_in: signing_ttl, cache: manifest_cache, cache_ttl: manifest_cache_ttl)
         Manifest.new(
           bucket: resolve_bucket,
           path: path,
           expires_in: expires_in,
           segment_duration: segment_duration,
-          variant_uri: method(:variant_uri)
+          variant_uri: method(:variant_uri),
+          cache: cache,
+          cache_ttl: cache_ttl
         )
       end
 
@@ -206,9 +213,18 @@ module HLS
         "#{::File.basename(path)}/#{variant_index}.m3u8"
       end
 
-      # Resolves the configured bucket value to an Aws::S3::Bucket.
-      # Accepts an Aws::S3::Bucket directly, or a non-empty string name
-      # (resolved through `HLS.s3_resource`).
+      # Resolves the configured bucket value to a usable bucket object.
+      #
+      # Accepts:
+      #   - An Aws::S3::Bucket directly
+      #   - A non-empty string name (resolved through `HLS.s3_resource`)
+      #   - Any object that responds to `object(key)` and yields a
+      #     duck-typed object implementing the storage protocol
+      #     (see HLS::Storage)
+      #
+      # The duck-typing escape hatch lets host apps swap in alternative
+      # backends — MinIO, GCS, an in-memory adapter for tests — without
+      # the gem hardcoding the AWS SDK.
       def resolve_bucket
         case bucket
         when Aws::S3::Bucket
@@ -219,7 +235,9 @@ module HLS
         when nil
           raise missing_bucket_error
         else
-          raise ArgumentError, "Unsupported bucket value: #{bucket.inspect}"
+          return bucket if bucket.respond_to?(:object)
+          raise ArgumentError, "Unsupported bucket value: #{bucket.inspect} " \
+            "(expected Aws::S3::Bucket, a String, or any object responding to #object(key))"
         end
       end
 
@@ -241,6 +259,17 @@ module HLS
     class_setting :audio_bitrate,    default: 128
     class_setting :video_codec,      default: :h264
     class_setting :max_bitrate_kbps, default: 15_000
+    # Hard cap (in seconds) on a single ffmpeg invocation. nil disables.
+    # On timeout the process gets SIGTERM, then SIGKILL after a grace
+    # period, and HLS::Error is raised. Tune this to roughly 2-3× the
+    # longest video you intend to encode.
+    class_setting :ffmpeg_timeout, default: nil
+
+    # Optional cache backend used by the read-side Manifest to avoid
+    # repeated S3 GETs for hot playlists. Anything implementing
+    # `fetch(key, expires_in:) { ... }` (Rails.cache fits) works.
+    class_setting :manifest_cache, default: nil
+    class_setting :manifest_cache_ttl, default: Manifest::DEFAULT_CACHE_TTL
     class_setting :bits_per_pixel,
       default: BITS_PER_PIXEL.fetch(:mixed),
       coerce: ->(v) { v.is_a?(Symbol) ? BITS_PER_PIXEL.fetch(v) : Integer(v) }
@@ -263,37 +292,116 @@ module HLS
     #
     # Returns the uploader's result hash: `{ uploaded: N, skipped: N }`.
     def process
-      state = HLS::State.load(output)
+      output.mkpath
+      result = nil
+      HLS::Instrumentation.instrument(:process,
+        profile: self.class.name, output: output.to_s, key_prefix: key_prefix
+      ) do |payload|
+        HLS::Lock.acquire(output) do
+          state = HLS::State.load(output)
 
-      unless encoded?(state)
-        encode!
-        poster! if self.class.posters.any?
-        state.record_encode(
-          input_digest: input_digest,
-          profile: self.class.name,
-          renditions: renditions.map(&:to_h)
-        )
-        state.save
+          unless encoded?(state)
+            encode!
+            poster! if self.class.posters.any?
+            verify_encode!
+            state.record_encode(
+              input_digest: input_digest,
+              profile: self.class.name,
+              renditions: renditions.map(&:to_h)
+            )
+            state.save
+          end
+
+          result = HLS::Uploader.new(
+            bucket: self.class.resolve_bucket,
+            output: output,
+            key_prefix: key_prefix,
+            state: state
+          ).perform
+
+          payload&.merge!(result) if payload
+        end
       end
+      result
+    end
 
-      HLS::Uploader.new(
-        bucket: self.class.resolve_bucket,
-        output: output,
-        key_prefix: key_prefix,
-        state: state
-      ).perform
+    # Walks the just-encoded output directory and asserts the bundle is
+    # well-formed: master + variants + segments + declared posters all
+    # exist and are non-empty. Raises HLS::Error with a list of problems
+    # if anything is missing — better to fail before recording state and
+    # uploading than to leave a half-written bundle on the bucket.
+    def verify_encode!
+      HLS::Instrumentation.instrument(:verify, profile: self.class.name, output: output.to_s) do
+        problems = []
+
+        master = output.join(PLAYLIST)
+        unless master.exist?
+          raise HLS::Error, "encode produced no master playlist at #{master}"
+        end
+
+        master_list = M3u8::Reader.new.read(master.read)
+        if master_list.items.empty?
+          problems << "master playlist has no variant streams"
+        end
+
+        master_list.items.each do |variant_item|
+          variant_path = output.join(variant_item.uri)
+          unless variant_path.exist?
+            problems << "variant playlist missing: #{variant_item.uri}"
+            next
+          end
+
+          variant_list = M3u8::Reader.new.read(variant_path.read)
+          if variant_list.items.empty?
+            problems << "variant #{variant_item.uri} has no segments"
+          end
+
+          variant_list.items.each do |segment_item|
+            segment_path = variant_path.dirname.join(segment_item.segment)
+            unless segment_path.exist? && segment_path.size > 0
+              problems << "segment missing or empty: #{variant_item.uri} → #{segment_item.segment}"
+            end
+          end
+        end
+
+        self.class.posters.each do |declaration|
+          poster_path = output.join(declaration.filename)
+          unless poster_path.exist? && poster_path.size > 0
+            problems << "declared poster missing or empty: #{declaration.filename}"
+          end
+        end
+
+        next if problems.empty?
+
+        raise HLS::Error,
+          "encode produced an invalid bundle at #{output}:\n  - " + problems.join("\n  - ")
+      end
     end
 
     # Runs ffmpeg to produce the HLS multiplex. Raises on non-zero exit.
     def encode!
-      run_ffmpeg(command)
+      input.validate! if input.respond_to?(:validate!)
+      HLS::Instrumentation.instrument(:encode,
+        profile: self.class.name,
+        output: output.to_s,
+        renditions: renditions.map(&:to_h)
+      ) do
+        run_ffmpeg(command)
+      end
     end
 
     # Runs ffmpeg to produce all declared posters in one decode pass.
     # No-op when no posters are declared.
     def poster!
       return if self.class.posters.empty?
-      run_ffmpeg(poster_command)
+      input.validate! if input.respond_to?(:validate!)
+      HLS::Instrumentation.instrument(:poster,
+        profile: self.class.name,
+        output: output.to_s,
+        count: self.class.posters.size
+      ) do
+        run_ffmpeg(poster_command)
+      end
     end
 
     # ffmpeg command that produces all declared posters in one decode pass.
@@ -364,12 +472,70 @@ module HLS
         output.join(PLAYLIST).exist?
     end
 
+    # Maximum number of stderr characters preserved in the error message.
+    # ffmpeg's stderr can be hundreds of KB on a real failure; the tail is
+    # where the actual error lives.
+    FFMPEG_STDERR_TAIL = 2_000
+    private_constant :FFMPEG_STDERR_TAIL
+
+    # Seconds between SIGTERM and SIGKILL when timing out a stuck ffmpeg.
+    FFMPEG_KILL_GRACE = 3
+    private_constant :FFMPEG_KILL_GRACE
+
     def run_ffmpeg(args)
       output.mkpath
       cmd = args.map(&:to_s)
-      unless system(*cmd)
-        raise HLS::Error, "ffmpeg failed (exit #{$?.exitstatus}): #{Shellwords.join(cmd)}"
+      timeout = self.class.ffmpeg_timeout
+
+      stderr_text, status, timed_out = capture_with_timeout(cmd, timeout: timeout)
+      return if status&.success?
+
+      tail = stderr_text.to_s.strip
+      tail = "...#{tail[-FFMPEG_STDERR_TAIL..]}" if tail.length > FFMPEG_STDERR_TAIL
+
+      if timed_out
+        raise HLS::Error,
+          "ffmpeg timed out after #{timeout}s: #{Shellwords.join(cmd)}\n" \
+          "stderr:\n#{tail}"
       end
+
+      raise HLS::Error,
+        "ffmpeg failed (exit #{status&.exitstatus}): #{Shellwords.join(cmd)}\n" \
+        "stderr:\n#{tail}"
+    end
+
+    # Runs cmd, capturing stderr. With a non-nil timeout, kills the
+    # process if it overruns. Returns [stderr, status, timed_out].
+    def capture_with_timeout(cmd, timeout:)
+      Open3.popen3(*cmd) do |stdin, stdout, stderr, wait_thr|
+        stdin.close
+        # Drain stdout in a background thread so a chatty ffmpeg can't
+        # block on a full pipe buffer.
+        stdout_thread = Thread.new { stdout.read }
+        stderr_thread = Thread.new { stderr.read }
+
+        if timeout && !wait_thr.join(timeout)
+          terminate_pid(wait_thr.pid)
+          stdout_thread.kill
+          stderr_thread.kill
+          return [stderr_thread.value.to_s, wait_thr.value, true]
+        end
+
+        [stderr_thread.value, wait_thr.value, false]
+      end
+    end
+
+    def terminate_pid(pid)
+      Process.kill("TERM", pid)
+      deadline = Time.now + FFMPEG_KILL_GRACE
+      until Time.now > deadline
+        return if Process.waitpid(pid, Process::WNOHANG)
+        sleep 0.1
+      end
+      Process.kill("KILL", pid)
+      Process.waitpid(pid)
+    rescue Errno::ESRCH, Errno::ECHILD
+      # Process already gone — nothing to do.
     end
 
     def filter_complex
@@ -387,6 +553,7 @@ module HLS
 
     def video_maps
       codec = resolved_video_codec
+      gop = gop_size
       downscaleable_renditions.each_with_index.flat_map do |rendition, i|
         [
           "-map", "[v#{i + 1}out]",
@@ -394,11 +561,22 @@ module HLS
           "-b:v:#{i}", "#{rendition.bitrate}k",
           "-maxrate:v:#{i}", "#{(rendition.bitrate * 1.1).to_i}k",
           "-bufsize:v:#{i}", "#{(rendition.bitrate * 2).to_i}k",
-          "-g", "180",
-          "-keyint_min", "180",
+          "-g", gop.to_s,
+          "-keyint_min", gop.to_s,
           "-sc_threshold", "0"
         ] + video_codec_options(codec, i)
       end
+    end
+
+    # GOP size = framerate × segment_duration. This forces a keyframe
+    # exactly at every segment boundary, which is required for HLS
+    # players to seek to a segment without buffering a stray P/B-frame
+    # chain. Without this scaling, a custom segment_duration (e.g., 2s
+    # or 6s) would produce segments that don't start with a keyframe and
+    # players would stall on seeks.
+    def gop_size
+      fps = input.respond_to?(:framerate) ? input.framerate : Input::DEFAULT_FRAMERATE
+      fps * self.class.segment_duration
     end
 
     def video_codec_options(codec, index)

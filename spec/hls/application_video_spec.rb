@@ -237,12 +237,49 @@ RSpec.describe HLS::ApplicationVideo do
       # Small:    480* 270*3/1000 =  388.8 →  400
       expect(bitrates).to eq([6300, 1600, 400])
     end
+
+    it "scales GOP/keyint with framerate × segment_duration" do
+      profile_class.segment_duration 4
+      input_30fps = FakeInput.new(width: 1920, height: 1080, framerate: 30)
+      profile = profile_class.new(input: input_30fps, output: output)
+
+      cmd = profile.command
+      # GOP for the first rendition: 30 * 4 = 120
+      i = cmd.index("-g")
+      expect(cmd[i + 1]).to eq("120")
+      j = cmd.index("-keyint_min")
+      expect(cmd[j + 1]).to eq("120")
+    end
+
+    it "uses a different GOP for a different segment_duration" do
+      profile_class.segment_duration 6
+      input_30fps = FakeInput.new(width: 1920, height: 1080, framerate: 30)
+      profile = profile_class.new(input: input_30fps, output: output)
+
+      cmd = profile.command
+      i = cmd.index("-g")
+      # 30fps × 6s = 180
+      expect(cmd[i + 1]).to eq("180")
+    end
+
+    it "uses a different GOP for a different framerate" do
+      profile_class.segment_duration 4
+      input_60fps = FakeInput.new(width: 1920, height: 1080, framerate: 60)
+      profile = profile_class.new(input: input_60fps, output: output)
+
+      cmd = profile.command
+      i = cmd.index("-g")
+      # 60fps × 4s = 240
+      expect(cmd[i + 1]).to eq("240")
+    end
   end
 
   describe "command equivalence with the legacy Scalable shape" do
-    # This test pins the ffmpeg arg list against the exact output the old
-    # HLS::Video::Scalable produced for the same input. It guards against
-    # regressions while migrating the DSL.
+    # This test pins the ffmpeg arg list against the output we ship for
+    # a typical screencast configuration. The GOP value (120) is
+    # intentionally different from the legacy's hardcoded 180: it now
+    # scales as framerate × segment_duration (30fps × 4s = 120) so each
+    # HLS segment starts on a keyframe.
     let(:profile_class) do
       Class.new(described_class).tap do |k|
         k.bits_per_pixel :screencast
@@ -268,19 +305,19 @@ RSpec.describe HLS::ApplicationVideo do
         "-b:v:0", "6300k",
         "-maxrate:v:0", "6930k",
         "-bufsize:v:0", "12600k",
-        "-g", "180", "-keyint_min", "180", "-sc_threshold", "0",
+        "-g", "120", "-keyint_min", "120", "-sc_threshold", "0",
         "-map", "[v2out]",
         "-c:v:1", "h264_videotoolbox",
         "-b:v:1", "1600k",
         "-maxrate:v:1", "1760k",
         "-bufsize:v:1", "3200k",
-        "-g", "180", "-keyint_min", "180", "-sc_threshold", "0",
+        "-g", "120", "-keyint_min", "120", "-sc_threshold", "0",
         "-map", "[v3out]",
         "-c:v:2", "h264_videotoolbox",
         "-b:v:2", "400k",
         "-maxrate:v:2", "440k",
         "-bufsize:v:2", "800k",
-        "-g", "180", "-keyint_min", "180", "-sc_threshold", "0",
+        "-g", "120", "-keyint_min", "120", "-sc_threshold", "0",
         "-map", "a:0", "-c:a:0", "aac", "-b:a:0", "128k", "-ac", "2",
         "-map", "a:0", "-c:a:1", "aac", "-b:a:1", "128k", "-ac", "2",
         "-map", "a:0", "-c:a:2", "aac", "-b:a:2", "128k", "-ac", "2",

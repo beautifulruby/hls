@@ -184,6 +184,81 @@ RSpec.describe HLS::Manifest do
       expect(manifest.variant("99")).to be_nil
     end
   end
+
+  describe "playlist caching" do
+    let(:cache) do
+      store = {}
+      Class.new {
+        define_method(:fetch) { |key, expires_in: nil, &block|
+          store[key] ||= [block.call, expires_in]
+          store[key].first
+        }
+        define_method(:store) { store }
+      }.new
+    end
+
+    it "uses the supplied cache when fetching playlists" do
+      cache_inst = cache
+      m1 = described_class.new(
+        bucket: bucket, path: "course/01", expires_in: 3600,
+        segment_duration: 4, cache: cache_inst, cache_ttl: 60
+      )
+      m1.master_playlist
+      expect(cache_inst.store.keys).to include("hls/manifest/course/01/index.m3u8")
+    end
+
+    it "passes cache_ttl through to the cache backend" do
+      cache_inst = cache
+      m1 = described_class.new(
+        bucket: bucket, path: "course/01", expires_in: 3600,
+        segment_duration: 4, cache: cache_inst, cache_ttl: 90
+      )
+      m1.master_playlist
+      _body, ttl = cache_inst.store["hls/manifest/course/01/index.m3u8"]
+      expect(ttl).to eq(90)
+    end
+
+    it "does not hit the bucket again on a cache hit" do
+      hits = 0
+      bucket = StubbedBucket.build(
+        name: "videos",
+        objects: {
+          "course/01/index.m3u8"   => master_m3u8,
+          "course/01/0/index.m3u8" => variant_m3u8,
+          "course/01/1/index.m3u8" => variant_m3u8,
+          "course/01/2/index.m3u8" => variant_m3u8
+        }
+      )
+      # Wrap the bucket's `object` to count gets.
+      original_object_method = bucket.method(:object)
+      counter = ->(key) {
+        original_object_method.call(key).tap do |obj|
+          orig_get = obj.method(:get)
+          obj.define_singleton_method(:get) do |*a|
+            hits += 1
+            orig_get.call(*a)
+          end
+        end
+      }
+      bucket.define_singleton_method(:object) { |k| counter.call(k) }
+
+      cache_inst = cache
+      m1 = described_class.new(
+        bucket: bucket, path: "course/01", expires_in: 3600,
+        segment_duration: 4, cache: cache_inst
+      )
+      m1.master_playlist
+      first_hits = hits
+
+      m2 = described_class.new(
+        bucket: bucket, path: "course/01", expires_in: 3600,
+        segment_duration: 4, cache: cache_inst
+      )
+      m2.master_playlist
+
+      expect(hits).to eq(first_hits)
+    end
+  end
 end
 
 RSpec.describe HLS::Manifest::Variant do

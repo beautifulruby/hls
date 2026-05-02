@@ -49,12 +49,22 @@ RSpec.describe HLS::ApplicationVideo, "#process orchestration" do
   # Drop a fake encoded bundle into output instead of actually running
   # ffmpeg. Returns the profile instance.
   def stub_encode_with_files(profile)
+    out = profile.output
     allow(profile).to receive(:encode!) do
-      output.mkpath
-      output.join("index.m3u8").write("#EXTM3U\n0/index.m3u8\n")
-      FileUtils.mkdir_p(output.join("0"))
-      output.join("0/index.m3u8").write("#EXTM3U\n0.ts\n")
-      output.join("0/0.ts").write("\x00\x01" * 100)
+      out.mkpath
+      out.join("index.m3u8").write(<<~M3U8)
+        #EXTM3U
+        #EXT-X-STREAM-INF:BANDWIDTH=1000000
+        0/index.m3u8
+      M3U8
+      FileUtils.mkdir_p(out.join("0"))
+      out.join("0/index.m3u8").write(<<~M3U8)
+        #EXTM3U
+        #EXTINF:4.0,
+        0.ts
+        #EXT-X-ENDLIST
+      M3U8
+      out.join("0/0.ts").write("\x00\x01" * 100)
     end
     profile
   end
@@ -130,9 +140,18 @@ RSpec.describe HLS::ApplicationVideo, "#process orchestration" do
     allow(p2).to receive(:encode!) do
       re_encoded = true
       output.mkpath
-      output.join("index.m3u8").write("#EXTM3U\n0/index.m3u8\n")
+      output.join("index.m3u8").write(<<~M3U8)
+        #EXTM3U
+        #EXT-X-STREAM-INF:BANDWIDTH=1000000
+        0/index.m3u8
+      M3U8
       FileUtils.mkdir_p(output.join("0"))
-      output.join("0/index.m3u8").write("#EXTM3U\n0.ts\n")
+      output.join("0/index.m3u8").write(<<~M3U8)
+        #EXTM3U
+        #EXTINF:4.0,
+        0.ts
+        #EXT-X-ENDLIST
+      M3U8
       output.join("0/0.ts").write("seg")
     end
 
@@ -184,6 +203,29 @@ RSpec.describe HLS::ApplicationVideo, "#encode!" do
     expect { profile.encode! }.to raise_error(HLS::Error, /ffmpeg failed/)
   end
 
+  it "includes stderr from the failing process in the error message" do
+    profile = profile_class.new(input: input, output: @tmp.join("out"))
+    # Use sh to write a known string to stderr and exit non-zero.
+    allow(profile).to receive(:command).and_return([
+      "sh", "-c", "echo 'something exploded in encoder' >&2; exit 1"
+    ])
+
+    expect { profile.encode! }.to raise_error(HLS::Error, /something exploded in encoder/)
+  end
+
+  it "truncates very long stderr to a tail" do
+    profile = profile_class.new(input: input, output: @tmp.join("out"))
+    # 5000 chars to stderr — should be truncated to a tail with leading "...".
+    allow(profile).to receive(:command).and_return([
+      "sh", "-c", "head -c 5000 /dev/zero | tr '\\0' 'X' >&2; exit 1"
+    ])
+
+    expect { profile.encode! }.to raise_error(HLS::Error) do |err|
+      expect(err.message).to include("...")
+      expect(err.message.length).to be < 5000
+    end
+  end
+
   it "creates the output directory before invoking ffmpeg" do
     out = @tmp.join("nested/dir")
     profile = profile_class.new(input: input, output: out)
@@ -191,5 +233,111 @@ RSpec.describe HLS::ApplicationVideo, "#encode!" do
 
     expect { profile.encode! }.not_to raise_error
     expect(out).to exist
+  end
+
+  describe "ffmpeg_timeout" do
+    let(:profile_class) do
+      Class.new(described_class).tap do |k|
+        k.rendition :full, scale: 1.0
+        k.ffmpeg_timeout 0.3
+      end
+    end
+
+    it "kills a runaway ffmpeg and raises a timeout error" do
+      profile = profile_class.new(input: input, output: @tmp.join("out"))
+      allow(profile).to receive(:command).and_return(["sleep", "30"])
+
+      start = Time.now
+      expect {
+        profile.encode!
+      }.to raise_error(HLS::Error, /timed out after 0\.3s/)
+
+      # We don't need a tight assertion — just that we didn't actually
+      # wait the full 30 seconds.
+      expect(Time.now - start).to be < 5
+    end
+
+    it "does not interfere with a fast process" do
+      profile = profile_class.new(input: input, output: @tmp.join("out"))
+      allow(profile).to receive(:command).and_return(["/usr/bin/true"])
+      expect { profile.encode! }.not_to raise_error
+    end
+  end
+end
+
+RSpec.describe HLS::ApplicationVideo, "#verify_encode!" do
+  around do |example|
+    Dir.mktmpdir { |tmp| @tmp = Pathname.new(tmp); example.run }
+  end
+
+  let(:input) { FakeInput.new(width: 1920, height: 1080, path: "/tmp/none.mp4") }
+  let(:output) { @tmp.join("out") }
+  let(:profile_class) do
+    Class.new(described_class).tap { |k| k.rendition :full, scale: 1.0 }
+  end
+
+  def write_valid_bundle
+    output.mkpath
+    output.join("index.m3u8").write(<<~M3U8)
+      #EXTM3U
+      #EXT-X-STREAM-INF:BANDWIDTH=1000000
+      0/index.m3u8
+    M3U8
+    FileUtils.mkdir_p(output.join("0"))
+    output.join("0/index.m3u8").write(<<~M3U8)
+      #EXTM3U
+      #EXTINF:4.0,
+      0.ts
+      #EXT-X-ENDLIST
+    M3U8
+    output.join("0/0.ts").write("\x00\x01" * 100)
+  end
+
+  it "passes for a well-formed bundle" do
+    profile = profile_class.new(input: input, output: output)
+    write_valid_bundle
+    expect { profile.verify_encode! }.not_to raise_error
+  end
+
+  it "raises when the master playlist is missing" do
+    profile = profile_class.new(input: input, output: output)
+    output.mkpath
+    expect { profile.verify_encode! }.to raise_error(HLS::Error, /no master playlist/)
+  end
+
+  it "raises when a variant playlist is missing on disk" do
+    profile = profile_class.new(input: input, output: output)
+    output.mkpath
+    output.join("index.m3u8").write("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n0/index.m3u8\n")
+    expect { profile.verify_encode! }.to raise_error(HLS::Error, /variant playlist missing: 0\/index\.m3u8/)
+  end
+
+  it "raises when a segment is missing" do
+    profile = profile_class.new(input: input, output: output)
+    write_valid_bundle
+    FileUtils.rm(output.join("0/0.ts"))
+    expect { profile.verify_encode! }.to raise_error(HLS::Error, /segment missing or empty/)
+  end
+
+  it "raises when a segment is empty (zero bytes)" do
+    profile = profile_class.new(input: input, output: output)
+    write_valid_bundle
+    output.join("0/0.ts").write("")
+    expect { profile.verify_encode! }.to raise_error(HLS::Error, /segment missing or empty/)
+  end
+
+  it "raises when a declared poster is missing" do
+    klass = Class.new(profile_class).tap { |k| k.poster :hero, scale: 1.0 }
+    profile = klass.new(input: input, output: output)
+    write_valid_bundle
+    expect { profile.verify_encode! }.to raise_error(HLS::Error, /declared poster missing.*hero\.jpg/)
+  end
+
+  it "passes when a declared poster exists with content" do
+    klass = Class.new(profile_class).tap { |k| k.poster :hero, scale: 1.0 }
+    profile = klass.new(input: input, output: output)
+    write_valid_bundle
+    output.join("hero.jpg").write("fake jpeg data")
+    expect { profile.verify_encode! }.not_to raise_error
   end
 end

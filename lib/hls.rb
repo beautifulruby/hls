@@ -26,7 +26,10 @@ module HLS
 end
 
 require_relative "hls/codecs"
+require_relative "hls/instrumentation"
+require_relative "hls/lock"
 require_relative "hls/state"
+require_relative "hls/storage"
 require_relative "hls/uploader"
 require_relative "hls/manifest"
 require_relative "hls/input"

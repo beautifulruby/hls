@@ -191,4 +191,166 @@ RSpec.describe HLS::Uploader do
       expect(keys.none? { |k| k.start_with?("/") || k.include?("//") }).to be(true)
     end
   end
+
+  describe "concurrency" do
+    it "uploads in parallel when concurrency > 1" do
+      # Track how many uploads are running at the same time. If the
+      # uploader is serial, max_overlap will be 1; with concurrency=4
+      # we expect to see overlap > 1.
+      mutex = Mutex.new
+      in_flight = 0
+      max_overlap = 0
+      slow_client = Aws::S3::Client.new(stub_responses: true, region: "auto")
+      slow_client.stub_responses(:put_object, ->(_ctx) {
+        mutex.synchronize { in_flight += 1; max_overlap = [max_overlap, in_flight].max }
+        sleep 0.05
+        mutex.synchronize { in_flight -= 1 }
+        { etag: "\"x\"" }
+      })
+      bucket = Aws::S3::Resource.new(client: slow_client).bucket("test-bucket")
+
+      uploader = described_class.new(
+        bucket: bucket,
+        output: @tmp,
+        key_prefix: "v",
+        state: state,
+        concurrency: 4
+      )
+      uploader.perform
+
+      expect(max_overlap).to be > 1
+    end
+
+    it "is serial when concurrency = 1" do
+      mutex = Mutex.new
+      in_flight = 0
+      max_overlap = 0
+      slow_client = Aws::S3::Client.new(stub_responses: true, region: "auto")
+      slow_client.stub_responses(:put_object, ->(_ctx) {
+        mutex.synchronize { in_flight += 1; max_overlap = [max_overlap, in_flight].max }
+        sleep 0.02
+        mutex.synchronize { in_flight -= 1 }
+        { etag: "\"x\"" }
+      })
+      bucket = Aws::S3::Resource.new(client: slow_client).bucket("test-bucket")
+
+      uploader = described_class.new(
+        bucket: bucket,
+        output: @tmp,
+        key_prefix: "v",
+        state: state,
+        concurrency: 1
+      )
+      uploader.perform
+
+      expect(max_overlap).to eq(1)
+    end
+
+    it "preserves all uploads exactly once across workers" do
+      keys_uploaded = []
+      mutex = Mutex.new
+      client = Aws::S3::Client.new(stub_responses: true, region: "auto")
+      client.stub_responses(:put_object, ->(ctx) {
+        mutex.synchronize { keys_uploaded << ctx.params[:key] }
+        { etag: "\"x\"" }
+      })
+      bucket = Aws::S3::Resource.new(client: client).bucket("test-bucket")
+
+      uploader = described_class.new(
+        bucket: bucket,
+        output: @tmp,
+        key_prefix: "v",
+        state: state,
+        concurrency: 4
+      )
+      uploader.perform
+
+      # 4 files in @tmp: index.m3u8, 0/index.m3u8, 0/0.ts, 0/1.ts, poster.jpg = 5
+      expect(keys_uploaded.size).to eq(5)
+      expect(keys_uploaded.uniq.size).to eq(5)
+    end
+  end
+
+  describe "retry behavior" do
+    let(:flaky_bucket) do
+      attempts = Hash.new(0)
+      client = Aws::S3::Client.new(stub_responses: true, region: "auto")
+      # First two attempts on every put hit a transient error, third succeeds.
+      client.stub_responses(:put_object, ->(context) {
+        key = context.params[:key]
+        attempts[key] += 1
+        if attempts[key] < 3
+          Aws::S3::Errors::ServiceUnavailable.new(context, "slow down")
+        else
+          { etag: "\"abc\"" }
+        end
+      })
+      Aws::S3::Resource.new(client: client).bucket("test-bucket")
+    end
+
+    it "retries transient failures and eventually succeeds" do
+      uploader = described_class.new(
+        bucket: flaky_bucket,
+        output: @tmp,
+        key_prefix: "v",
+        state: state,
+        max_retries: 5,
+        initial_backoff: 0.001
+      )
+      expect { uploader.perform }.not_to raise_error
+    end
+
+    it "gives up after max_retries and re-raises the underlying error" do
+      always_failing = Aws::S3::Client.new(stub_responses: true, region: "auto")
+      always_failing.stub_responses(:put_object,
+        Aws::S3::Errors::ServiceUnavailable.new(nil, "always down"))
+      bucket = Aws::S3::Resource.new(client: always_failing).bucket("test-bucket")
+
+      uploader = described_class.new(
+        bucket: bucket,
+        output: @tmp,
+        key_prefix: "v",
+        state: state,
+        max_retries: 1,
+        initial_backoff: 0.001
+      )
+
+      expect { uploader.perform }.to raise_error(Aws::S3::Errors::ServiceUnavailable)
+    end
+
+    it "does not retry permanent failures like NoSuchBucket" do
+      gone = Aws::S3::Client.new(stub_responses: true, region: "auto")
+      attempts = Concurrent::AtomicFixnum.new(0) if defined?(Concurrent::AtomicFixnum)
+      attempts ||= begin
+        # Simple thread-safe counter without depending on concurrent-ruby.
+        m = Mutex.new
+        n = 0
+        Class.new {
+          define_method(:increment) { m.synchronize { n += 1 } }
+          define_method(:value) { m.synchronize { n } }
+        }.new
+      end
+      gone.stub_responses(:put_object, ->(_ctx) {
+        attempts.increment if attempts.respond_to?(:increment)
+        attempts.value if attempts.respond_to?(:value)
+        Aws::S3::Errors::NoSuchBucket.new(nil, "gone")
+      })
+      bucket = Aws::S3::Resource.new(client: gone).bucket("test-bucket")
+
+      uploader = described_class.new(
+        bucket: bucket,
+        output: @tmp,
+        key_prefix: "v",
+        state: state,
+        max_retries: 5,
+        initial_backoff: 0.001,
+        concurrency: 1  # serial so attempt counts are deterministic
+      )
+
+      expect { uploader.perform }.to raise_error(Aws::S3::Errors::NoSuchBucket)
+      # Serial uploader with concurrency=1 stops after the first failure,
+      # so we see exactly one attempt — proving no retries happened.
+      expect(attempts.value).to eq(1)
+    end
+  end
 end

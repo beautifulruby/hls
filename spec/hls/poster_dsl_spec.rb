@@ -138,12 +138,27 @@ RSpec.describe HLS::ApplicationVideo, "poster DSL" do
       end
     end
 
+    def write_valid_bundle(output_dir)
+      output_dir.mkpath
+      output_dir.join("index.m3u8").write(<<~M3U8)
+        #EXTM3U
+        #EXT-X-STREAM-INF:BANDWIDTH=1
+        0/index.m3u8
+      M3U8
+      FileUtils.mkdir_p(output_dir.join("0"))
+      output_dir.join("0/index.m3u8").write("#EXTM3U\n#EXTINF:4,\n0.ts\n#EXT-X-ENDLIST\n")
+      output_dir.join("0/0.ts").write("seg")
+    end
+
     it "calls poster! after encode! when posters are declared" do
       output_dir = @tmp.join("out")
       profile = profile_class.new(input: input, output: output_dir, key_prefix: "v")
 
-      allow(profile).to receive(:encode!) { output_dir.mkpath; output_dir.join("index.m3u8").write("x") }
-      allow(profile).to receive(:poster!).and_call_original
+      allow(profile).to receive(:encode!) { write_valid_bundle(output_dir) }
+      allow(profile).to receive(:poster!).and_wrap_original do |original, *args|
+        output_dir.join("hero.jpg").write("fake jpeg")
+        original.call(*args)
+      end
       allow(profile).to receive(:poster_command).and_return(["/usr/bin/true"])
 
       profile.process
@@ -156,7 +171,7 @@ RSpec.describe HLS::ApplicationVideo, "poster DSL" do
       output_dir = @tmp.join("out")
       profile = profile_class.new(input: input, output: output_dir, key_prefix: "v")
 
-      allow(profile).to receive(:encode!) { output_dir.mkpath; output_dir.join("index.m3u8").write("x") }
+      allow(profile).to receive(:encode!) { write_valid_bundle(output_dir) }
       allow(profile).to receive(:poster!)
 
       profile.process

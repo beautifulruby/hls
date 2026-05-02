@@ -24,14 +24,17 @@ module HLS
       HLS.s3_resource = cfg.s3_resource if cfg.s3_resource
 
       ActiveSupport.on_load(:hls_application_video) do
-        bucket           cfg.bucket           if cfg.bucket
-        signing_ttl      cfg.signing_ttl      if cfg.signing_ttl
-        segment_duration cfg.segment_duration if cfg.segment_duration
-        video_codec      cfg.video_codec      if cfg.video_codec
-        audio_codec      cfg.audio_codec      if cfg.audio_codec
-        audio_bitrate    cfg.audio_bitrate    if cfg.audio_bitrate
-        bits_per_pixel   cfg.bits_per_pixel   if cfg.bits_per_pixel
-        max_bitrate_kbps cfg.max_bitrate_kbps if cfg.max_bitrate_kbps
+        bucket             cfg.bucket             if cfg.bucket
+        signing_ttl        cfg.signing_ttl        if cfg.signing_ttl
+        segment_duration   cfg.segment_duration   if cfg.segment_duration
+        video_codec        cfg.video_codec        if cfg.video_codec
+        audio_codec        cfg.audio_codec        if cfg.audio_codec
+        audio_bitrate      cfg.audio_bitrate      if cfg.audio_bitrate
+        bits_per_pixel     cfg.bits_per_pixel     if cfg.bits_per_pixel
+        max_bitrate_kbps   cfg.max_bitrate_kbps   if cfg.max_bitrate_kbps
+        ffmpeg_timeout     cfg.ffmpeg_timeout     if cfg.ffmpeg_timeout
+        manifest_cache     cfg.manifest_cache     if cfg.manifest_cache
+        manifest_cache_ttl cfg.manifest_cache_ttl if cfg.manifest_cache_ttl
       end
 
       ActiveSupport.run_load_hooks(:hls_application_video, HLS::ApplicationVideo)
