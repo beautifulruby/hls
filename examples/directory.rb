@@ -12,21 +12,28 @@ storage = Pathname.new(ENV.fetch("SOURCE_PATH", "/Users/bradgessler/Desktop"))
 source = storage.join("Exports")
 destination = storage.join("Uploads")
 
-HLS::Jobs.process do |jobs|
-  directory = HLS::Directory.new(source).glob("**/*.mp4")
-  puts "Processing #{directory.count} files from #{source}"
-  directory.each do |input, path|
-    output = destination.join(path)
-    FileUtils.mkdir_p(output)
+class CourseVideo < HLS::ApplicationVideo
+  bits_per_pixel :screencast
 
-    puts "Processing #{input.path} to #{output}"
+  rendition :full,   scale: 1.0
+  rendition :medium, scale: 0.5
+  rendition :small,  scale: 0.25
 
-    package = HLS::Video::Scalable.new(input:, output:)
-    jobs.render package
+  poster :poster, scale: 1.0
+end
 
-    poster = HLS::Poster.new(input:, output:)
-    jobs.render poster
+directory = HLS::Directory.new(source).glob("**/*.mp4").to_a
+puts "Processing #{directory.size} files from #{source}"
 
-    puts "Completed #{input.path} to #{output}"
-  end
+directory.each do |input, path|
+  output = destination.join(path)
+  FileUtils.mkdir_p(output)
+
+  puts "Processing #{input.path} to #{output}"
+
+  profile = CourseVideo.new(input:, output:)
+  profile.encode!
+  profile.poster!
+
+  puts "Completed #{input.path} to #{output}"
 end

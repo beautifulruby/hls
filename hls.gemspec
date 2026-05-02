@@ -36,6 +36,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency "bigdecimal", "~> 3.0"
   spec.add_dependency "m3u8", "~> 0.8.0"
   spec.add_dependency "parallel", "~> 1.0"
+  spec.add_dependency "aws-sdk-s3", "~> 1.0"
 
   # For more information and examples about making a new gem, check out our
   # guide at: https://bundler.io/guides/creating_gem.html
