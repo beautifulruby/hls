@@ -179,6 +179,54 @@ RSpec.describe "end-to-end encode and poster pipeline" do
     end
   end
 
+  describe "codec options actually land in the encoded segments" do
+    # Unit specs assert "-tune animation" appears in the command array,
+    # but that's just an array assertion — ffmpeg might silently ignore
+    # an unknown flag, or a future ffmpeg might rename it. This spec
+    # encodes for real and ffprobes the output to verify the codec
+    # decision survived the round-trip. Catches drift between ffmpeg
+    # versions and accidental flag deletions in #video_codec_options.
+    let(:input) { HLS::Input.new(@input_path) }
+
+    it "produces h264-encoded segments when video_codec is libx264" do
+      output = @tmp.join("codec-libx264")
+      klass = Class.new(HLS::ApplicationVideo).tap do |k|
+        k.video_codec "libx264"
+        k.audio_codec "aac"
+        k.audio_bitrate 64
+        k.rendition :only, scale: 0.5
+      end
+      silence_ffmpeg { klass.new(input: input, output: output).encode! }
+
+      segment = output.join("0").glob("*.ts").sort.first
+      meta = probe(segment)
+      expect(meta.dig("streams", 0, "codec_name")).to eq("h264")
+    end
+
+    it "honors a custom segment_duration in the GOP arithmetic" do
+      output = @tmp.join("seg-2s")
+      klass = Class.new(HLS::ApplicationVideo).tap do |k|
+        k.video_codec "libx264"
+        k.audio_codec "aac"
+        k.audio_bitrate 64
+        k.segment_duration 2
+        k.rendition :only, scale: 0.5
+      end
+
+      silence_ffmpeg { klass.new(input: input, output: output).encode! }
+
+      # 12s source / 2s segments → ~6 segments. With the previous
+      # hardcoded -g 180 (and 30fps source) keyframes would only land
+      # every 6 seconds — segments would overrun the keyframe and
+      # players would stall on seek. With gop_size = 30*2 = 60, every
+      # segment starts on a keyframe. The structural test: 12s / 2s
+      # produces about 6 segments, not 3.
+      playlist = parse_playlist(output.join("0", "index.m3u8"))
+      expect(playlist.items.size).to be_between(5, 7),
+        "expected ~6 segments at 2s each from a 12s source, got #{playlist.items.size}"
+    end
+  end
+
   describe "with no posters declared" do
     let(:input)  { HLS::Input.new(@input_path) }
     let(:output) { @tmp.join("no-posters") }

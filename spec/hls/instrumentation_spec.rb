@@ -55,6 +55,46 @@ RSpec.describe HLS::ApplicationVideo, "instrumentation events" do
     end
   end
 
+  it "publishes upload_retry.hls events with sequential attempt numbers on a flaky bucket" do
+    @tmp.join("index.m3u8").write("x")
+
+    attempts = 0
+    flaky = Aws::S3::Client.new(stub_responses: true, region: "auto")
+    flaky.stub_responses(:put_object, ->(_ctx) {
+      attempts += 1
+      if attempts < 3
+        Aws::S3::Errors::ServiceUnavailable.new(_ctx, "slow")
+      else
+        { etag: '"x"' }
+      end
+    })
+    bucket = Aws::S3::Resource.new(client: flaky).bucket("test-bucket")
+
+    seen = []
+    sub = ActiveSupport::Notifications.subscribe("upload_retry.hls") do |_, _, _, _, payload|
+      seen << payload
+    end
+
+    HLS::Uploader.new(
+      bucket: bucket,
+      output: @tmp,
+      key_prefix: "v",
+      state: HLS::State.load(@tmp),
+      max_retries: 5,
+      initial_backoff: 0.001,
+      concurrency: 1
+    ).perform
+
+    expect(seen.map { |p| p[:attempt] }).to eq([1, 2])
+    expect(seen.first).to include(
+      :key,
+      error: "Aws::S3::Errors::ServiceUnavailable"
+    )
+    expect(seen.first[:key]).to eq("v/index.m3u8")
+  ensure
+    ActiveSupport::Notifications.unsubscribe(sub) if sub
+  end
+
   it "publishes encode.hls, verify.hls, upload_object.hls, and process.hls events" do
     profile = profile_class.new(input: input, output: output, key_prefix: "videos/foo")
     allow(profile).to receive(:encode!) do

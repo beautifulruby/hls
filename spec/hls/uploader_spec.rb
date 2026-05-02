@@ -271,6 +271,54 @@ RSpec.describe HLS::Uploader do
     end
   end
 
+  describe "concurrency + retries together" do
+    it "recovers under parallelism without state corruption or duplicate uploads" do
+      # Each key takes 2 transient failures before succeeding. With
+      # concurrency: 4 and 5 keys, all workers will hit retries
+      # roughly simultaneously — exposing any race in the retry loop,
+      # state mutation, or worker error handling.
+      attempts = Hash.new(0)
+      attempts_mutex = Mutex.new
+      put_keys = []
+      put_mutex = Mutex.new
+
+      flaky = Aws::S3::Client.new(stub_responses: true, region: "auto")
+      flaky.stub_responses(:put_object, ->(ctx) {
+        key = ctx.params[:key]
+        n = attempts_mutex.synchronize { attempts[key] += 1 }
+        if n < 3
+          Aws::S3::Errors::ServiceUnavailable.new(ctx, "transient")
+        else
+          put_mutex.synchronize { put_keys << key }
+          { etag: "\"etag-#{key}\"" }
+        end
+      })
+      bucket = Aws::S3::Resource.new(client: flaky).bucket("test-bucket")
+
+      uploader = described_class.new(
+        bucket: bucket,
+        output: @tmp,
+        key_prefix: "videos/foo",
+        state: state,
+        concurrency: 4,
+        max_retries: 5,
+        initial_backoff: 0.001
+      )
+
+      result = uploader.perform
+
+      # 5 unique files, each succeeded exactly once.
+      expect(put_keys.uniq.size).to eq(5)
+      expect(result[:uploaded]).to eq(5)
+
+      # State recorded an etag for each file — no race lost any.
+      expect(state.uploads.size).to eq(5)
+      state.uploads.each do |_, record|
+        expect(record[:etag]).to start_with("\"etag-")
+      end
+    end
+  end
+
   describe "retry behavior" do
     let(:flaky_bucket) do
       attempts = Hash.new(0)

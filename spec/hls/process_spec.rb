@@ -172,6 +172,36 @@ RSpec.describe HLS::ApplicationVideo, "#process orchestration" do
     expect(keys.all? { |k| k.start_with?("my-video-id/") }).to be(true)
   end
 
+  it "does not write state.json when verify_encode! fails (ordering invariant)" do
+    profile = profile_class.new(input: input, output: output, key_prefix: "videos/foo")
+    # Stub encode! to write a *broken* bundle: master playlist refers to
+    # a variant that doesn't exist on disk. verify_encode! must catch
+    # this and raise BEFORE state.save runs.
+    allow(profile).to receive(:encode!) do
+      output.mkpath
+      output.join("index.m3u8").write(<<~M3U8)
+        #EXTM3U
+        #EXT-X-STREAM-INF:BANDWIDTH=1000000
+        0/index.m3u8
+      M3U8
+      # Don't write the variant playlist — verify should catch this.
+    end
+
+    expect { profile.process }.to raise_error(HLS::Error, /variant playlist missing/)
+
+    state_file = output.join(HLS::State::FILENAME)
+    if state_file.exist?
+      data = JSON.parse(state_file.read, symbolize_names: true)
+      # encoded_at should still be nil — we never recorded a successful encode.
+      expect(data[:encoded_at]).to be_nil
+      expect(data[:input_digest]).to be_nil
+    end
+    # Critically: a re-run with the same input must re-attempt encode,
+    # not skip to upload of nothing.
+    expect(profile).to receive(:encode!).and_call_original
+    expect { profile.process }.to raise_error(HLS::Error)
+  end
+
   it "computes input_digest as a stable sha256" do
     profile = profile_class.new(input: input, output: output)
     digest1 = profile.input_digest

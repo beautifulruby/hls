@@ -71,4 +71,73 @@ RSpec.describe HLS::Lock do
       described_class.acquire(@tmp) { }
     }.not_to raise_error
   end
+
+  it "hands off encode work across processes via lock + state.json" do
+    # Realistic two-worker race: A acquires the lock and partially
+    # records its uploads to state.json, then dies (oncall kills it,
+    # OOM, container scheduled away). B sees the lock as held and
+    # bails. After A is gone, C acquires the lock and picks up where A
+    # left off — its upload pass skips the keys A already recorded.
+    pid_a = fork do
+      HLS::Lock.acquire(@tmp) do
+        state = HLS::State.load(@tmp)
+        state.record_encode(input_digest: "sha256:abc", profile: "A", renditions: [])
+        state.record_upload(relative_key: "0/0.ts", digest: "deadbeef", etag: "a-etag")
+        state.save
+        @tmp.join("a-recorded").write("y")
+        sleep 30
+      end
+    end
+
+    # Wait for A to record progress to state.json
+    deadline = Time.now + 3
+    until @tmp.join("a-recorded").exist? || Time.now > deadline
+      sleep 0.05
+    end
+
+    # Worker B: rejected immediately because A holds the lock.
+    expect {
+      HLS::Lock.acquire(@tmp) { }
+    }.to raise_error(HLS::Lock::Busy)
+
+    # Kill A. The kernel drops the flock automatically.
+    Process.kill("KILL", pid_a)
+    Process.waitpid(pid_a)
+
+    # Worker C: acquires cleanly, reads state.json, sees A's recorded
+    # upload — and would skip re-uploading 0/0.ts on its uploader pass.
+    seen = nil
+    HLS::Lock.acquire(@tmp) do
+      state = HLS::State.load(@tmp)
+      seen = state.uploaded?(relative_key: "0/0.ts", digest: "deadbeef")
+    end
+    expect(seen).to be(true)
+  end
+
+  it "releases the kernel-level lock when the holding process is SIGKILLed mid-encode" do
+    # Realistic failure mode: oncall kills a stuck worker. The flock
+    # is advisory at the kernel level — when the process dies, the
+    # kernel drops it automatically. A subsequent worker should be
+    # able to re-acquire without manual cleanup.
+    pid = fork do
+      described_class.acquire(@tmp) do
+        @tmp.join("acquired").write("y")
+        sleep 30  # would never get here in normal life — we're going to kill it
+      end
+    end
+
+    deadline = Time.now + 3
+    until @tmp.join("acquired").exist? || Time.now > deadline
+      sleep 0.05
+    end
+
+    Process.kill("KILL", pid)
+    Process.waitpid(pid)
+
+    # The lock file is still on disk — that's fine, only the kernel
+    # advisory lock matters. New worker should grab it cleanly.
+    expect {
+      described_class.acquire(@tmp) { }
+    }.not_to raise_error
+  end
 end

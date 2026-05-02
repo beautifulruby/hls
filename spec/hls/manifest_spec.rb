@@ -186,16 +186,18 @@ RSpec.describe HLS::Manifest do
   end
 
   describe "playlist caching" do
-    let(:cache) do
-      store = {}
-      Class.new {
-        define_method(:fetch) { |key, expires_in: nil, &block|
-          store[key] ||= [block.call, expires_in]
-          store[key].first
-        }
-        define_method(:store) { store }
-      }.new
+    # Tiny ergonomic cache that mimics Rails.cache#fetch and exposes its
+    # internal store so tests can introspect what was cached.
+    class TestCache
+      attr_reader :store
+      def initialize; @store = {}; end
+      def fetch(key, expires_in: nil)
+        @store[key] ||= [yield, expires_in]
+        @store[key].first
+      end
     end
+
+    let(:cache) { TestCache.new }
 
     it "uses the supplied cache when fetching playlists" do
       cache_inst = cache
@@ -216,6 +218,58 @@ RSpec.describe HLS::Manifest do
       m1.master_playlist
       _body, ttl = cache_inst.store["hls/manifest/course/01/index.m3u8"]
       expect(ttl).to eq(90)
+    end
+
+    it "returns stale data until TTL expires (intentional tradeoff)" do
+      # The cache is keyed by S3 path. After a re-encode, the master
+      # playlist's bytes on the bucket change but the cache key doesn't
+      # — so cached requests keep serving the OLD playlist for up to
+      # cache_ttl seconds. This is by design: a 5-minute window in
+      # exchange for a huge S3 GET reduction. If you ever change this
+      # to invalidate-on-write, this test will fail and force you to
+      # think about whether the new behavior is what you want.
+      v1 = <<~M3U8
+        #EXTM3U
+        #EXT-X-STREAM-INF:BANDWIDTH=1
+        v1/index.m3u8
+      M3U8
+      v2 = <<~M3U8
+        #EXTM3U
+        #EXT-X-STREAM-INF:BANDWIDTH=2
+        v2/index.m3u8
+      M3U8
+
+      mem = HLS::Storage::Memory.build(
+        name: "videos",
+        objects: { "course/01/index.m3u8" => v1 }
+      )
+
+      shared_cache = cache
+      m = described_class.new(
+        bucket: mem, path: "course/01", expires_in: 3600,
+        segment_duration: 4, cache: shared_cache, cache_ttl: 60
+      )
+
+      first = m.master_playlist
+      expect(first.items.first.uri).to eq("01/v1.m3u8") # default variant_uri rewrite
+
+      # Re-encode lands new bytes at the same key.
+      mem.object("course/01/index.m3u8").put(body: v2)
+
+      # Same cache, same path — we keep getting v1 until TTL expires.
+      m2 = described_class.new(
+        bucket: mem, path: "course/01", expires_in: 3600,
+        segment_duration: 4, cache: shared_cache, cache_ttl: 60
+      )
+      expect(m2.master_playlist.items.first.uri).to eq("01/v1.m3u8")
+
+      # A fresh cache (different host process, or expired TTL) sees v2.
+      fresh_cache = cache.class.new
+      m3 = described_class.new(
+        bucket: mem, path: "course/01", expires_in: 3600,
+        segment_duration: 4, cache: fresh_cache, cache_ttl: 60
+      )
+      expect(m3.master_playlist.items.first.uri).to eq("01/v2.m3u8")
     end
 
     it "does not hit the bucket again on a cache hit" do

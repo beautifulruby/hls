@@ -47,6 +47,62 @@ RSpec.describe HLS::ApplicationVideo, "with a duck-typed bucket" do
   end
 end
 
+RSpec.describe HLS::Storage::Memory, "end-to-end with process + manifest" do
+  require "tmpdir"
+  require "fileutils"
+
+  around { |ex| Dir.mktmpdir { |t| @tmp = Pathname.new(t); ex.run } }
+
+  it "round-trips a profile encode through Memory and back through Manifest" do
+    storage = HLS::Storage::Memory.new(name: "v")
+
+    input_path = @tmp.join("input.mp4")
+    input_path.write("fake bytes" * 50)
+    input = FakeInput.new(width: 1920, height: 1080, path: input_path.to_s)
+    output = @tmp.join("encoded")
+
+    klass = Class.new(HLS::ApplicationVideo).tap do |k|
+      k.bucket storage
+      k.rendition :full, scale: 1.0
+    end
+
+    profile = klass.new(input: input, output: output, key_prefix: "courses/intro/01")
+    allow(profile).to receive(:encode!) do
+      output.mkpath
+      output.join("index.m3u8").write(<<~M3U8)
+        #EXTM3U
+        #EXT-X-STREAM-INF:BANDWIDTH=1000000
+        0/index.m3u8
+      M3U8
+      FileUtils.mkdir_p(output.join("0"))
+      output.join("0/index.m3u8").write(<<~M3U8)
+        #EXTM3U
+        #EXTINF:4.0,
+        0.ts
+        #EXT-X-ENDLIST
+      M3U8
+      output.join("0/0.ts").write("seg-bytes")
+    end
+
+    result = profile.process
+    expect(result[:uploaded]).to eq(3)
+
+    # Now read the bundle back through Manifest using the same Memory.
+    manifest = klass.manifest("courses/intro/01")
+    list = manifest.master_playlist
+    expect(list.items.size).to eq(1)
+    expect(list.items.first.uri).to eq("01/0.m3u8")
+
+    # Variant playlist: signed segment URLs come from the Memory adapter.
+    variant = manifest.variants.first
+    signed = variant.playlist.items.first.segment
+    expect(signed).to start_with("memory://courses/intro/01/0/")
+
+    # And the poster_url adapter call works too.
+    expect(manifest.poster_url).to start_with("memory://courses/intro/01/poster.jpg")
+  end
+end
+
 RSpec.describe HLS::Manifest, "with the in-memory storage adapter" do
   let(:master_m3u8) do
     <<~M3U8

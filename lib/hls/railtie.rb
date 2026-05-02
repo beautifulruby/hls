@@ -13,6 +13,32 @@ module HLS
   class Railtie < Rails::Railtie
     config.hls = ActiveSupport::OrderedOptions.new
 
+    # Settings the host app can override via `config.hls.<setting>`.
+    # Each name maps 1:1 to a `class_setting` on HLS::ApplicationVideo.
+    APPLIED_SETTINGS = %i[
+      bucket signing_ttl segment_duration video_codec audio_codec
+      audio_bitrate bits_per_pixel max_bitrate_kbps ffmpeg_timeout
+      manifest_cache manifest_cache_ttl
+    ].freeze
+
+    # Treat both nil and empty-string as "not set". Common pattern in
+    # host apps: `hls.bucket = ENV.fetch("VIDEO_S3_BUCKET_NAME", "")` —
+    # when the env var is missing, an empty string would otherwise
+    # silently override a working value set in a profile class.
+    def self.present?(value)
+      !value.nil? && !(value.is_a?(String) && value.empty?)
+    end
+
+    # Apply config values to the given target class, skipping anything
+    # that isn't "present" by the rule above. Extracted from the
+    # initializer so it's directly unit-testable.
+    def self.apply_config(target, cfg)
+      APPLIED_SETTINGS.each do |name|
+        value = cfg.public_send(name)
+        target.public_send(name, value) if present?(value)
+      end
+    end
+
     initializer "hls.autoload_paths", before: :set_autoload_paths do |app|
       videos_path = app.root.join("app", "videos")
       app.config.autoload_paths       << videos_path.to_s
@@ -24,17 +50,7 @@ module HLS
       HLS.s3_resource = cfg.s3_resource if cfg.s3_resource
 
       ActiveSupport.on_load(:hls_application_video) do
-        bucket             cfg.bucket             if cfg.bucket
-        signing_ttl        cfg.signing_ttl        if cfg.signing_ttl
-        segment_duration   cfg.segment_duration   if cfg.segment_duration
-        video_codec        cfg.video_codec        if cfg.video_codec
-        audio_codec        cfg.audio_codec        if cfg.audio_codec
-        audio_bitrate      cfg.audio_bitrate      if cfg.audio_bitrate
-        bits_per_pixel     cfg.bits_per_pixel     if cfg.bits_per_pixel
-        max_bitrate_kbps   cfg.max_bitrate_kbps   if cfg.max_bitrate_kbps
-        ffmpeg_timeout     cfg.ffmpeg_timeout     if cfg.ffmpeg_timeout
-        manifest_cache     cfg.manifest_cache     if cfg.manifest_cache
-        manifest_cache_ttl cfg.manifest_cache_ttl if cfg.manifest_cache_ttl
+        HLS::Railtie.apply_config(self, cfg)
       end
 
       ActiveSupport.run_load_hooks(:hls_application_video, HLS::ApplicationVideo)
