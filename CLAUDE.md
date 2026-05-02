@@ -46,8 +46,11 @@ lib/hls.rb                      Top-level module, error class, S3 resource acces
 lib/hls/version.rb              Version constant
 lib/hls/application_video.rb    DSL + encode/poster/upload orchestration
 lib/hls/manifest.rb             Reads bundle from S3, returns signed M3u8 playlists
-lib/hls/uploader.rb             Walks output dir, idempotent S3 upload
+lib/hls/uploader.rb             Walks output dir, parallel idempotent S3 upload with retries
 lib/hls/state.rb                JSON sidecar: input digest, encoded_at, per-key etags
+lib/hls/lock.rb                 Advisory flock around the output dir during process
+lib/hls/instrumentation.rb      ActiveSupport::Notifications wrapper (no-op without AS)
+lib/hls/storage.rb              Storage protocol doc + Memory adapter for tests
 lib/hls/codecs.rb               Logical → explicit codec resolution per host
 lib/hls/input.rb                ffprobe wrapper (Open3, raises on failure)
 lib/hls/directory.rb            Source-walking helper for batch encoding scripts
@@ -62,20 +65,27 @@ End-to-end specs that shell out to ffmpeg live under `spec/integration/`.
 
 ## The pipeline
 
-`profile.process` runs four phases:
+`profile.process` acquires a file lock on the output dir, then runs:
 
 1. **Probe** — `HLS::Input` shells out to `ffprobe` for width / height
-   / codec / duration. Lazy and memoized per Input instance.
+   / codec / duration / framerate. Lazy and memoized per Input
+   instance. `validate!` is called before encode to fail fast on
+   audio-only inputs.
 2. **Encode** — `ApplicationVideo#encode!` builds an `ffmpeg` command
    from the rendition declarations + codec resolution. One ffmpeg
    invocation produces all renditions of the multiplex via
-   `-filter_complex split` + `-var_stream_map`.
+   `-filter_complex split` + `-var_stream_map`. Subject to
+   `ffmpeg_timeout` and stderr is captured into `HLS::Error` on failure.
 3. **Poster** — separate ffmpeg invocation if any `poster ...`
    declarations exist. Multiple outputs from one decode pass.
-4. **Upload** — `HLS::Uploader` walks the output dir, computes MD5 of
+4. **Verify** — `verify_encode!` walks the output and asserts all
+   expected files exist and are non-empty. Bails BEFORE recording state
+   so a failed verify doesn't claim the bundle is encoded.
+5. **Upload** — `HLS::Uploader` walks the output dir, computes MD5 of
    each file, skips files whose recorded digest in `state.json`
    matches. PUTs each file with appropriate Content-Type and
-   Cache-Control. Records etag back into state.
+   Cache-Control. Default `concurrency: 4` parallel workers, with
+   bounded retries on transient errors. Records etag back into state.
 
 Idempotency is enforced at two levels:
 - **Encode level**: skipped when the input's SHA256 digest matches
@@ -264,6 +274,33 @@ VOD playlists are immutable once written. We use `public, max-age=300`
 (not `no-cache`) so CDNs can edge-cache them. A redeploy of a bundle
 takes effect within 5 min. Don't tighten this without thinking about
 CDN cost.
+
+### GOP must equal framerate × segment_duration
+
+ffmpeg's `-g` (GOP size) sets how many frames between keyframes. HLS
+players seek to segment boundaries and need each segment to start with
+a keyframe. Computed in `ApplicationVideo#gop_size` from
+`input.framerate * segment_duration`. Hardcoding it (the previous bug)
+caused stalls when segment_duration was set to anything other than the
+"normal" value. Don't reintroduce a constant here.
+
+### Lock file collides with stale interrupted runs only via Busy
+
+`process` writes `.hls-lock` and `flock(LOCK_EX | LOCK_NB)`s it. A
+second process gets `HLS::Lock::Busy` *immediately* — we don't wait.
+The lock file itself stays on disk after release; only the kernel-level
+advisory lock is dropped. The state.json + .hls-lock + .DS_Store + ._*
+patterns are all skipped by the uploader.
+
+### Storage protocol is duck-typed
+
+`bucket` accepts anything responding to `object(key)` whose return
+value implements `get` / `put(body:, content_type:, cache_control:)` /
+`presigned_url(:get, expires_in:)`. The `Aws::S3::Bucket` already
+matches; `HLS::Storage::Memory` is a test double; anything else is the
+host app's responsibility. `resolve_bucket` returns duck-typed buckets
+unchanged — it only special-cases String (via `HLS.s3_resource`) and
+Aws::S3::Bucket (passthrough).
 
 ## Running tests
 

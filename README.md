@@ -201,6 +201,79 @@ through the class hierarchy and overridable by the host app's
 | `audio_bitrate`      | `128`                | kbps |
 | `bits_per_pixel`     | `:mixed` (4)         | `:screencast` (3), `:mixed` (4), `:motion` (6) |
 | `max_bitrate_kbps`   | `15_000`             | Caps scaled-rendition bitrate |
+| `ffmpeg_timeout`     | `nil`                | Hard cap (seconds) on a single ffmpeg run; `nil` disables |
+| `manifest_cache`     | `nil`                | Object responding to `fetch(key, expires_in:) { ... }` (e.g. `Rails.cache`) |
+| `manifest_cache_ttl` | `300`                | Seconds to keep cached playlists |
+
+### Concurrency and retries
+
+The uploader runs PUTs in parallel with bounded concurrency and retries
+transient failures with exponential backoff. Defaults are tuned for
+typical home/office connections; override per-call:
+
+```ruby
+HLS::Uploader.new(
+  bucket: bucket, output: out, key_prefix: prefix, state: state,
+  concurrency: 8,        # default 4
+  max_retries: 5,        # default 3
+  initial_backoff: 0.25  # default 0.5 seconds, doubles per attempt
+).perform
+```
+
+Only transient errors (network timeouts, 503s, throttling) are retried;
+permanent errors (NoSuchBucket, 403) fail fast.
+
+### Instrumentation
+
+The gem publishes ActiveSupport::Notifications events when AS is
+loaded. Subscribe to wire up logging or metrics:
+
+```ruby
+ActiveSupport::Notifications.subscribe("encode.hls") do |name, start, finish, _, payload|
+  Rails.logger.info "[hls] encoded #{payload[:profile]} in #{((finish - start) * 1000).round}ms"
+end
+```
+
+Events:
+
+| Name                | Payload keys                                |
+|---------------------|---------------------------------------------|
+| `encode.hls`        | `profile`, `output`, `renditions`           |
+| `poster.hls`        | `profile`, `output`, `count`                |
+| `verify.hls`        | `profile`, `output`                         |
+| `upload_object.hls` | `key`, `bytes`, `content_type`              |
+| `upload_retry.hls`  | `key`, `attempt`, `error`, `message`        |
+| `process.hls`       | `profile`, `key_prefix`, `uploaded`, `skipped` |
+
+### Storage adapters
+
+The default backend is `Aws::S3::Bucket` (works with AWS S3, Tigris,
+Cloudflare R2). Anything responding to `object(key)` and yielding a
+duck-typed object that implements `get`, `put(body:, content_type:,
+cache_control:)`, and `presigned_url(:get, expires_in:)` works as a
+drop-in. `HLS::Storage::Memory` is shipped as a no-network adapter
+useful for tests.
+
+#### MinIO
+
+MinIO is API-compatible with S3 — point the AWS SDK at its endpoint:
+
+```ruby
+# config/initializers/hls.rb
+Rails.application.config.hls.tap do |hls|
+  hls.s3_resource = Aws::S3::Resource.new(
+    access_key_id:     ENV["MINIO_ACCESS_KEY"],
+    secret_access_key: ENV["MINIO_SECRET_KEY"],
+    endpoint:          ENV["MINIO_ENDPOINT"], # e.g. http://localhost:9000
+    region:            "us-east-1",
+    force_path_style:  true                   # required for MinIO
+  )
+  hls.bucket = ENV.fetch("MINIO_BUCKET")
+end
+```
+
+`force_path_style: true` is the key MinIO requirement — MinIO doesn't
+do virtual-hosted-style addressing.
 
 ## Development
 
