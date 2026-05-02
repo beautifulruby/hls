@@ -176,6 +176,48 @@ To pin a specific encoder regardless of host, pass a string:
 
 ## Common gotchas
 
+### Variant URIs are RELATIVE to the master playlist URL
+
+The master playlist served by the controller lives at e.g.
+`/videos/<path>/<id>.m3u8`. Variant URIs inside it are RFC 3986
+relative references — the player resolves each one against the
+master's URL. A variant URI of `<id>/0.m3u8` resolves to
+`/videos/<path>/<id>/0.m3u8` (good). A variant URI of
+`<path>/<id>/0.m3u8` resolves to
+`/videos/<path>/<path>/<id>/0.m3u8` — **the path doubles** —
+because resolution drops the master URL's filename and joins
+relative to the parent directory. We hit this once: it produced
+`Aws::S3::Errors::NoSuchKey` when the player tried to fetch the
+doubled URL.
+
+`HLS::Manifest#master_playlist` produces the URI via the configured
+`variant_uri` callable, defaulting to
+`<basename(path)>/<index>.m3u8`. This default works for
+`/videos/*path/:id/:variant.m3u8` Rails routes. For any other URL
+shape, override `self.variant_uri(path:, variant_index:)` on the
+profile class.
+
+There's a regression test in `spec/hls/manifest_spec.rb` that
+simulates the player's URL resolution with `URI#+`. Keep it. The
+`HLS::Testing` matcher `resolve_variants_under(url)` is the
+generalization users can run on their own profile specs.
+
+### `path:` gem deps don't hot-reload
+
+When the host app pins `gem "hls", path: "../hls"` for development,
+gem source changes don't reload across the Rails process. After
+changing gem code, fully restart the Rails server (Ctrl+C, `bin/dev`
+again). Zeitwerk's reloader watches `app/`, not gems.
+
+### `hls.js` caches master playlists in-memory
+
+Even after a server-side fix lands, the player keeps the previously-
+fetched master playlist in memory across plays in the same tab. If
+debugging URL rewriting, hard-reload the browser tab (Cmd+Shift+R)
+or open a private window to bypass it. The `Cache-Control: public,
+max-age=300` we set on uploaded m3u8s is also strong enough to keep
+old playlists around briefly.
+
 ### "Encoded but files missing"
 
 If state.json exists but the output directory's been wiped (ephemeral
