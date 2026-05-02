@@ -3,6 +3,7 @@
 require "json"
 require "pathname"
 require "tmpdir"
+require "uri"
 require "m3u8"
 
 module HLS
@@ -166,6 +167,88 @@ module HLS
 
         failure_message_when_negated do |dir|
           "expected #{dir} not to be a valid HLS bundle, but it was"
+        end
+      end
+
+      # Asserts that the variant URIs in a master playlist resolve to
+      # clean URLs when a player fetches the master at the given URL.
+      # Catches the path-prefix-included-twice bug class:
+      #
+      #   it "rewrites variant URIs correctly" do
+      #     manifest = CourseVideo.manifest("phlex/forms/overview")
+      #     expect(manifest.master_playlist).to resolve_variants_under(
+      #       "https://app.example.com/videos/phlex/forms/overview.m3u8"
+      #     )
+      #   end
+      #
+      # The rule: a *relative* variant URI must resolve to a URL whose
+      # path extends the master URL's path-without-extension. If a
+      # variant URI accidentally includes the master path as a prefix,
+      # resolution against the master's parent directory loses that
+      # prefix and the resolved URL no longer starts with the master
+      # path — that's the doubling bug.
+      #
+      # Absolute variant URIs (different scheme/host) and path-absolute
+      # URIs (starting with /) are skipped — those are intentional
+      # routing decisions, not doubling.
+      #
+      # Pass `.matching(<regexp>)` to additionally assert the resolved
+      # URLs match a specific shape:
+      #
+      #   .resolve_variants_under(url).matching(%r{/videos/.+/\d+\.m3u8\z})
+      RSpec::Matchers.define :resolve_variants_under do |master_url|
+        match do |playlist|
+          @master_uri  = URI(master_url)
+          @master_path_without_ext = @master_uri.path.sub(/\.m3u8\z/, "")
+          @failures    = []
+
+          unless playlist.respond_to?(:items)
+            @failures << "expected an M3u8::Playlist, got #{playlist.class}"
+            next false
+          end
+
+          if playlist.items.empty?
+            @failures << "master playlist has no variant streams"
+            next false
+          end
+
+          playlist.items.each_with_index do |item, i|
+            variant_uri = URI(item.uri)
+            resolved = (@master_uri + item.uri)
+
+            # Skip checks for absolute URIs (different host or scheme)
+            # and path-absolute URIs (starting with /). Those are
+            # explicit routing choices, not bugs.
+            relative = !variant_uri.absolute? && !item.uri.start_with?("/")
+
+            if relative && !resolved.path.start_with?(@master_path_without_ext)
+              @failures << "variant ##{i} URI #{item.uri.inspect} resolved to " \
+                "#{resolved} — its path #{resolved.path.inspect} should " \
+                "extend the master path #{@master_path_without_ext.inspect} " \
+                "but does not. This usually means the variant URI " \
+                "incorrectly includes a path prefix."
+            end
+
+            if @expected_pattern && !resolved.to_s.match?(@expected_pattern)
+              @failures << "variant ##{i} resolved URL #{resolved.to_s.inspect} " \
+                "did not match #{@expected_pattern.inspect}"
+            end
+          end
+
+          @failures.empty?
+        end
+
+        chain :matching do |pattern|
+          @expected_pattern = pattern
+        end
+
+        failure_message do
+          "expected variant URIs to resolve cleanly under #{@master_uri}, but:\n  - " +
+            @failures.join("\n  - ")
+        end
+
+        failure_message_when_negated do
+          "expected variant URIs NOT to resolve cleanly under #{@master_uri}, but they did"
         end
       end
     end
