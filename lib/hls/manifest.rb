@@ -27,12 +27,27 @@ module HLS
 
     attr_reader :bucket, :path, :expires_in, :segment_duration
 
-    def initialize(bucket:, path:, expires_in:, segment_duration: 4)
+    # bucket::          Aws::S3::Bucket
+    # path::            S3 key prefix where the bundle lives
+    # expires_in::      pre-signed URL TTL in seconds
+    # segment_duration:: HLS segment length, drives Variant#duration math
+    # variant_uri::     callable taking (path:, variant_index:) and
+    #                   returning the URI string to put in the master
+    #                   playlist for that variant. Default produces
+    #                   `<basename(path)>/<index>.m3u8`, which matches a
+    #                   `/videos/*path/:id/:variant` Rails route shape.
+    #                   Override it to fit a different URL scheme.
+    def initialize(bucket:, path:, expires_in:, segment_duration: 4, variant_uri: nil)
       @bucket           = bucket
       @path             = path
       @expires_in       = Integer(expires_in)
       @segment_duration = Integer(segment_duration)
+      @variant_uri      = variant_uri || DEFAULT_VARIANT_URI
     end
+
+    DEFAULT_VARIANT_URI = ->(path:, variant_index:) {
+      "#{::File.basename(path)}/#{variant_index}.m3u8"
+    }
 
     # Pre-signed URL for a poster image. With no argument, returns
     # `<path>/poster.jpg` (back-compat with the legacy `HLS::Poster`
@@ -41,15 +56,24 @@ module HLS
       presigned_url("#{name}.jpg")
     end
 
-    # Master playlist with variant URIs rewritten from `<index>/index.m3u8`
-    # to `<path>/<index>.m3u8`. Returns a fresh M3u8::Playlist on each
-    # call (does not mutate the cached raw playlist).
+    # Master playlist with variant URIs rewritten from ffmpeg's
+    # `<index>/index.m3u8` form to whatever the configured `variant_uri`
+    # callable returns. The default produces `<id>/<index>.m3u8` where
+    # `<id>` is the last segment of the manifest's path — relative to
+    # the master playlist's URL, so a player fetching
+    # `/videos/<path>/<id>.m3u8` resolves the variant URI to
+    # `/videos/<path>/<id>/<index>.m3u8`.
+    #
+    # Returns a fresh M3u8::Playlist on each call (does not mutate the
+    # cached raw playlist).
     def master_playlist
       list = M3u8::Playlist.new
       list.items = raw_master_playlist.items.map do |item|
         rewritten = item.clone
-        variant_index = ::File.dirname(item.uri)
-        rewritten.uri = ::File.join(path, "#{variant_index}.m3u8")
+        rewritten.uri = @variant_uri.call(
+          path: path,
+          variant_index: ::File.dirname(item.uri)
+        )
         rewritten
       end
       list

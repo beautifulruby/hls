@@ -160,13 +160,16 @@ RSpec.describe "HLS in a Rails app", type: :integration do
       stub_const("PipelineTestVideo", reader_class)
     end
 
-    it "returns a master playlist with per-variant signed URIs" do
+    it "returns a master playlist with variant URIs relative to the master URL" do
       manifest = PipelineTestVideo.manifest("course/intro")
       master = manifest.master_playlist
 
       expect(master.items.size).to eq(2)
+      # URIs are basename(path) + variant index — so a player resolving
+      # them against /videos/course/intro.m3u8 lands at the right show
+      # route.
       master.items.each do |item|
-        expect(item.uri).to start_with("course/intro/")
+        expect(item.uri).to match(%r{\Aintro/\d+\.m3u8\z})
       end
     end
 

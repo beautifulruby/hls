@@ -76,14 +76,70 @@ RSpec.describe HLS::Manifest do
   end
 
   describe "#master_playlist" do
-    it "rewrites variant URIs to <path>/<index>.m3u8" do
+    it "rewrites variant URIs to <id>/<index>.m3u8 (relative to the master URL)" do
+      # The variant URIs in the master must resolve correctly when a
+      # player fetches the master at /videos/<path>/<id>.m3u8 and asks
+      # for a relative variant. With path=course/01, basename is "01",
+      # so URIs read 01/0.m3u8 and the player resolves to
+      # /videos/course/01/0.m3u8 — matching the show route.
       list = manifest.master_playlist
       uris = list.items.map(&:uri)
       expect(uris).to eq([
-        "course/01/0.m3u8",
-        "course/01/1.m3u8",
-        "course/01/2.m3u8"
+        "01/0.m3u8",
+        "01/1.m3u8",
+        "01/2.m3u8"
       ])
+    end
+
+    it "uses a custom variant_uri callable when one is supplied" do
+      custom = HLS::Manifest.new(
+        bucket: bucket,
+        path: "course/01",
+        expires_in: 3600,
+        variant_uri: ->(path:, variant_index:) { "/streams/#{path}/v#{variant_index}" }
+      )
+
+      uris = custom.master_playlist.items.map(&:uri)
+      expect(uris).to eq([
+        "/streams/course/01/v0",
+        "/streams/course/01/v1",
+        "/streams/course/01/v2"
+      ])
+    end
+
+    # Behavioral regression test for the URI-doubling bug. A real HLS
+    # player fetches the master playlist at a URL, then resolves each
+    # relative variant URI *against that URL* per RFC 3986. If the
+    # variant URIs include the master's path prefix, resolution doubles
+    # it and the player requests a non-existent route. This test
+    # simulates that resolution and asserts the result matches the
+    # expected show-route shape.
+    it "produces variant URIs that resolve correctly under the master playlist URL" do
+      master_url = URI("https://app.example.com/videos/course/01.m3u8")
+
+      resolved = manifest.master_playlist.items.map { |item| (master_url + item.uri).to_s }
+
+      expect(resolved).to eq([
+        "https://app.example.com/videos/course/01/0.m3u8",
+        "https://app.example.com/videos/course/01/1.m3u8",
+        "https://app.example.com/videos/course/01/2.m3u8"
+      ])
+    end
+
+    it "does not double the master path when resolved (catches the path-doubling regression)" do
+      master_url = URI("https://app.example.com/videos/course/01.m3u8")
+      master_path_without_ext = "/videos/course/01"
+
+      manifest.master_playlist.items.each do |item|
+        resolved = (master_url + item.uri).to_s
+        # The master path segment must appear exactly once in the
+        # resolved URL. If it appears twice, the variant URI included
+        # the path prefix and resolved relative to the master's parent.
+        occurrences = resolved.scan(master_path_without_ext).size
+        expect(occurrences).to eq(1),
+          "variant URI #{item.uri.inspect} resolved to #{resolved.inspect} " \
+          "which contains #{master_path_without_ext.inspect} #{occurrences} times (expected 1)"
+      end
     end
 
     it "preserves three variants for a three-rendition master" do

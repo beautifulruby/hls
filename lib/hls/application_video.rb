@@ -184,8 +184,26 @@ module HLS
           bucket: resolve_bucket,
           path: path,
           expires_in: expires_in,
-          segment_duration: segment_duration
+          segment_duration: segment_duration,
+          variant_uri: method(:variant_uri)
         )
+      end
+
+      # Maps a manifest's S3 path + ffmpeg variant index to the URI that
+      # appears in the master playlist for that variant. Override on a
+      # subclass to fit a non-default URL scheme:
+      #
+      #   class CustomVideo < HLS::ApplicationVideo
+      #     def self.variant_uri(path:, variant_index:)
+      #       "/streams/#{path}/v/#{variant_index}.m3u8"
+      #     end
+      #   end
+      #
+      # The default returns `<basename(path)>/<variant_index>.m3u8`,
+      # which is relative to the master playlist's URL and matches a
+      # `/videos/*path/:id/:variant.m3u8` Rails route.
+      def variant_uri(path:, variant_index:)
+        "#{::File.basename(path)}/#{variant_index}.m3u8"
       end
 
       # Resolves the configured bucket value to an Aws::S3::Bucket.
