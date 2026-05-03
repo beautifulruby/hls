@@ -45,8 +45,8 @@ module HLS
   # browser-loadable, but they round-trip cleanly through a Manifest so
   # you can assert on them in specs.
   module Storage
-    # In-memory bucket for tests. Backed by a hash. Not thread-safe; if
-    # you parallelize through this adapter, wrap it yourself.
+    # In-memory bucket for tests. Backed by a hash protected by a
+    # single mutex — concurrent puts and gets across threads are safe.
     class Memory
       def self.build(name: "memory", objects: {})
         bucket = new(name: name)
@@ -59,36 +59,41 @@ module HLS
       def initialize(name:)
         @name = name
         @store = {}
+        @mutex = Mutex.new
       end
 
       def object(key)
-        Object.new(store: @store, key: key)
+        Object.new(store: @store, mutex: @mutex, key: key)
       end
 
       def keys
-        @store.keys
+        @mutex.synchronize { @store.keys }
       end
 
       class Object
         attr_reader :key
 
-        def initialize(store:, key:)
+        def initialize(store:, mutex:, key:)
           @store = store
+          @mutex = mutex
           @key = key
         end
 
         def get
-          entry = @store.fetch(@key) { raise KeyError, "no object at #{@key}" }
+          entry = @mutex.synchronize { @store[@key] }
+          raise KeyError, "no object at #{@key}" if entry.nil?
           Response.new(body: StringIO.new(entry[:body].to_s), content_type: entry[:content_type])
         end
 
         def put(body:, content_type: "application/octet-stream", cache_control: nil)
           body_str = body.respond_to?(:read) ? body.read : body.to_s
-          @store[@key] = {
-            body: body_str,
-            content_type: content_type,
-            cache_control: cache_control
-          }
+          @mutex.synchronize do
+            @store[@key] = {
+              body: body_str,
+              content_type: content_type,
+              cache_control: cache_control
+            }
+          end
           PutResponse.new(etag: %("#{Digest::MD5.hexdigest(body_str)}"))
         end
 

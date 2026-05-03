@@ -71,6 +71,38 @@ RSpec.describe HLS::EncodeJob do
     )
   end
 
+  it "propagates HLS::Error from profile.process so ActiveJob can retry/route to dead letter" do
+    profile_class
+
+    fake_profile = double("profile_instance")
+    allow(fake_profile).to receive(:process).and_raise(HLS::Error, "ffmpeg blew up")
+    allow(TestProfileForJob).to receive(:new).and_return(fake_profile)
+
+    expect {
+      described_class.perform_now(
+        profile: "TestProfileForJob",
+        input: "/tmp/source.mp4",
+        output: "/tmp/out"
+      )
+    }.to raise_error(HLS::Error, "ffmpeg blew up")
+  end
+
+  it "propagates HLS::Lock::Busy so a competing worker doesn't silently succeed" do
+    profile_class
+
+    fake_profile = double("profile_instance")
+    allow(fake_profile).to receive(:process).and_raise(HLS::Lock::Busy, "another worker is encoding")
+    allow(TestProfileForJob).to receive(:new).and_return(fake_profile)
+
+    expect {
+      described_class.perform_now(
+        profile: "TestProfileForJob",
+        input: "/tmp/source.mp4",
+        output: "/tmp/out"
+      )
+    }.to raise_error(HLS::Lock::Busy)
+  end
+
   it "enqueues correctly via perform_later" do
     profile_class
 

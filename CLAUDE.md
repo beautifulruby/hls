@@ -57,6 +57,9 @@ lib/hls/directory.rb            Source-walking helper for batch encoding scripts
 lib/hls/testing.rb              Public RSpec helpers + matcher (only when RSpec defined)
 lib/hls/railtie.rb              Autoloads app/videos/, applies config.hls defaults
 lib/hls/encode_job.rb           ActiveJob wrapper around profile.process
+
+lib/generators/hls/install/     `bin/rails g hls:install` — initializer + ApplicationVideo
+lib/generators/hls/video/       `bin/rails g hls:video NAME` — per-content-type profile
 ```
 
 Each lib file has a matching spec under `spec/hls/`. Cross-cutting
@@ -354,6 +357,20 @@ hard deps anyway) but should not require Rails. Custom matchers go
 inside the `if defined?(RSpec::Matchers)` block at the bottom of that
 file.
 
+### A new Rails generator
+
+Live under `lib/generators/hls/<name>/`:
+- `<name>_generator.rb` — subclass `Rails::Generators::{Base,NamedBase}`
+- `templates/*.rb` (or `.tt`) — Thor templates; `<%= %>` interpolates
+  generator method results
+
+Spec it under `spec/generators/`. Use the Rails helpers
+(`Rails::Generators::Testing::{Behavior,Assertions}`) plus
+`spec/support/minitest_shims.rb` so `assert_file` and friends work
+inside RSpec. Always include a behavior test that `load`s the
+generated file and asserts the resulting class actually works — text
+matches don't catch wrong inheritance, missing renditions, etc.
+
 ## How this gem is used in `../server`
 
 The sister project `../server` (beautifulruby.com) is the canonical
@@ -399,7 +416,7 @@ Rejected to keep scope tight:
 
 ```sh
 # 1. Bump lib/hls/version.rb
-# 2. Update CHANGELOG (if/when one exists)
+# 2. Move the [Unreleased] section in CHANGELOG.md under the new version
 bundle exec rake release
 ```
 

@@ -36,6 +36,42 @@ RSpec.describe HLS::Storage::Memory do
       url = bucket.object("foo").presigned_url(:get, expires_in: 60)
       expect(url).to eq("memory://foo?expires_in=60")
     end
+
+    it "is safe under concurrent puts and gets across threads" do
+      bucket = HLS::Storage::Memory.new(name: "concurrent")
+      threads = 8
+      writes_per_thread = 50
+
+      writers = threads.times.map do |t|
+        Thread.new do
+          writes_per_thread.times do |i|
+            bucket.object("key-#{t}-#{i}").put(body: "body-#{t}-#{i}")
+          end
+        end
+      end
+
+      readers = threads.times.map do
+        Thread.new do
+          200.times do
+            bucket.keys.each do |key|
+              begin
+                bucket.object(key).get.body.read
+              rescue KeyError
+                # racing with not-yet-written keys is fine
+              end
+            end
+          end
+        end
+      end
+
+      (writers + readers).each(&:join)
+
+      # Every put landed and is readable.
+      expect(bucket.keys.size).to eq(threads * writes_per_thread)
+      bucket.keys.each do |key|
+        expect(bucket.object(key).get.body.read).to start_with("body-")
+      end
+    end
   end
 end
 

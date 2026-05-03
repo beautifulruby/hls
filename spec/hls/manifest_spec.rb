@@ -272,6 +272,24 @@ RSpec.describe HLS::Manifest do
       expect(m3.master_playlist.items.first.uri).to eq("01/v2.m3u8")
     end
 
+    it "caches variant playlists too, not just the master" do
+      # The master playlist test passes accidentally even if variant
+      # caching is broken — variants get loaded lazily via #variants.
+      # This test exercises that path explicitly so a refactor that
+      # only caches the master would fail loudly.
+      cache_inst = cache
+      m = described_class.new(
+        bucket: bucket, path: "course/01", expires_in: 3600,
+        segment_duration: 4, cache: cache_inst, cache_ttl: 60
+      )
+      m.variants.each(&:items)
+
+      keys = cache_inst.store.keys
+      expect(keys).to include("hls/manifest/course/01/0/index.m3u8")
+      expect(keys).to include("hls/manifest/course/01/1/index.m3u8")
+      expect(keys).to include("hls/manifest/course/01/2/index.m3u8")
+    end
+
     it "does not hit the bucket again on a cache hit" do
       hits = 0
       bucket = StubbedBucket.build(
