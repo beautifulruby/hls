@@ -47,6 +47,24 @@ If bundler is not being used to manage dependencies, install the gem by executin
 gem install hls
 ```
 
+In a Rails app, scaffold the initial config + base profile with:
+
+```bash
+bin/rails g hls:install
+```
+
+This writes `config/initializers/hls.rb` (with env-var-driven bucket /
+S3 config) and `app/videos/application_video.rb` (the base class your
+profiles inherit from). Then generate per-content-type profiles:
+
+```bash
+bin/rails g hls:video Course
+# => app/videos/course_video.rb
+```
+
+The generated profile has a sensible 3-rendition ladder, a hero
+poster, and inline comments for the common knobs. Edit to tune.
+
 ## Usage
 
 ### Declare a profile

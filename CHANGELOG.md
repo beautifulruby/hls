@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Rails generators.** `bin/rails g hls:install` scaffolds
+  `config/initializers/hls.rb` and `app/videos/application_video.rb`.
+  `bin/rails g hls:video NAME` writes a per-content-type profile under
+  `app/videos/` with a sensible default ladder, an active hero poster,
+  and commented hints for the common per-profile overrides.
+
 - **ffmpeg stderr capture.** When ffmpeg fails, the tail of its stderr
   is included in `HLS::Error` so failures are diagnosable without
   re-running with verbose logging.
