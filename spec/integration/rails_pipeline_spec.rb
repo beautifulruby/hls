@@ -23,7 +23,13 @@ RSpec.describe "HLS in a Rails app", type: :integration do
   around do |example|
     Dir.mktmpdir("hls-rails") do |tmp|
       @tmp = Pathname.new(tmp)
-      @input = generate_test_video(path: @tmp.join("source.mp4"), duration: 8)
+      # Tiny fixture: just enough to produce a valid HLS bundle. The
+      # spec verifies "ffmpeg actually works" end-to-end, not encode
+      # quality or segment counts (that's covered in end_to_end_spec).
+      @input = generate_test_video(
+        path: @tmp.join("source.mp4"),
+        duration: 2, width: 320, height: 180, framerate: 10
+      )
       example.run
     end
   end
@@ -125,12 +131,13 @@ RSpec.describe "HLS in a Rails app", type: :integration do
       # Encode the bundle locally first, THEN build the stub bucket
       # from the resulting files. This mirrors production: files already
       # exist in S3 when the controller asks for them.
-      encoder_class = Class.new(HLS::ApplicationVideo).tap do |k|
-        # Placeholder storage; we don't upload from this class so no
-        # network ever happens.
-        k.storage HLS::Storage::S3.new(bucket_name: "encode-only")
-        k.video_codec "libx264"
-        k.audio_codec "aac"
+      # Inherit from the dummy ApplicationVideo so we pick up its
+      # libx264 + ultrafast-preset override (defined for test speed).
+      encoder_class = Class.new(::ApplicationVideo).tap do |k|
+        # Placeholder storage — we don't upload from this class. Override
+        # the dummy's `def self.storage = ...` with define_singleton_method.
+        placeholder = HLS::Storage::S3.new(bucket_name: "encode-only")
+        k.define_singleton_method(:storage) { placeholder }
         k.audio_bitrate 64
         k.rendition :high,   scale: 1.0
         k.rendition :medium, scale: 0.5

@@ -38,14 +38,14 @@ module HLS
     # path if not given). Returns the path. The video uses ffmpeg's
     # `testsrc` filter for video and `sine` for audio — fully
     # self-contained, no external assets.
-    def generate_test_video(path: nil, duration: 12, width: 640, height: 360, frequency: 440)
+    def generate_test_video(path: nil, duration: 12, width: 640, height: 360, framerate: 30, frequency: 440)
       path = Pathname.new(path || Dir::Tmpname.create(["hls-fixture", ".mp4"]) {})
 
       cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
-        "-f", "lavfi", "-i", "testsrc=duration=#{duration}:size=#{width}x#{height}:rate=30",
+        "-f", "lavfi", "-i", "testsrc=duration=#{duration}:size=#{width}x#{height}:rate=#{framerate}",
         "-f", "lavfi", "-i", "sine=frequency=#{frequency}:duration=#{duration}",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "64k",
         "-shortest",
         path.to_s

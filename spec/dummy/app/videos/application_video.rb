@@ -11,4 +11,15 @@ class ApplicationVideo < HLS::ApplicationVideo
   # with NVENC support but no GPU is present, and ffmpeg crashes at
   # runtime with exit 255. libx264 always works.
   video_codec "libx264"
+
+  private
+
+  # Override libx264's `-preset slow` with `ultrafast` for tests.
+  # We're verifying the gem can drive ffmpeg through to a valid HLS
+  # bundle, not the encoded quality — fast preset trims real-ffmpeg
+  # specs from ~8s to under 2s.
+  def video_codec_options(codec, index)
+    return ["-preset:v:#{index}", "ultrafast"] if codec.to_s == "libx264"
+    super
+  end
 end
