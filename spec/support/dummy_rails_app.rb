@@ -14,7 +14,7 @@
 
 module DummyRailsApp
   def self.boot!
-    return if defined?(@app) && @app
+    return @app if defined?(@app) && @app
 
     require "rails"
     require "active_support"
