@@ -35,7 +35,7 @@ class <%= class_name %> < ApplicationVideo
   # poster :og,        width: 1200, height: 630   # social share card
 
   # Per-profile overrides. Anything left out falls back to
-  # ApplicationVideo / config.hls / gem defaults.
+  # ApplicationVideo, then the gem's defaults.
   #
   # bits_per_pixel   :screencast   # :screencast (3), :mixed (4), :motion (6)
   # video_codec      "libx264"     # pin software encoder regardless of host
