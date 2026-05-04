@@ -31,7 +31,7 @@ defaults from `config/initializers/hls.rb`, and ships an
 
 Consider [buying a video course from Beautiful Ruby](https://beautifulruby.com) and learn a thing or two to keep the machine going that originally built this gem.
 
-[![](https://immutable.terminalwire.com/NgTt6nzO1aEnExV8j6ODuKt2iZpY74ZF8ecpUSCp4A0tXA0ErpJIS4cdMX0tQQKOWwZSl65jWnpzpgCLJThhhWtZJGr42XKt7WIi.png)](https://beautifulruby.com/phlex/forms/overview)
+[![](https://immutable.terminalwire.com/NgTt6nzO1aEnExV8j6ODuKt2iZpY74ZF8ecpUSCp4A0tXA0ErpJIS4cdMX0tQQKOWwZSl65jWnpzpgCLJThhhWtZJGr42XKt7WIi.png)](https://beautifulruby.com/phlex)
 
 ## Installation
 
