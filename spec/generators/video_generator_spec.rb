@@ -2,7 +2,8 @@
 
 require "spec_helper"
 require "rails/generators"
-require "rails/generators/test_case"
+require "rails/generators/testing/behavior"
+require "rails/generators/testing/assertions"
 require "active_support/isolated_execution_state"
 require "generators/hls/video/video_generator"
 require_relative "../support/minitest_shims"

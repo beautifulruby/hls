@@ -247,14 +247,23 @@ is missing. Empty string is truthy in Ruby. `resolve_bucket` treats
 both `nil` and `""` as "no bucket configured" and raises. Don't
 add another path that bypasses this check.
 
-### Railtie initializer ordering
+### Railtie load hook ordering
 
-`config/initializers/hls.rb` in a host app sets `config.hls.bucket`,
-which the gem's `apply_config` initializer reads. The Railtie's
-initializer is declared `after: :load_config_initializers` so config
-files run first. Without that ordering, the gem would read the config
-*before* the host app set it. There's a regression test in
-`spec/hls/railtie_spec.rb` against `spec/dummy/config/initializers/hls.rb`.
+There is no `Rails.application.config.hls.*` config bag — host apps
+configure HLS::ApplicationVideo directly via the
+`:hls_application_video` load hook. The Railtie fires the hook
+`after: :load_config_initializers` so initializers that subscribe to
+it are registered before it runs. Without that ordering the hook
+would fire against zero subscribers and config would silently
+no-op. There's a regression test in `spec/hls/railtie_spec.rb`
+against `spec/dummy/config/initializers/hls.rb`.
+
+We deliberately don't expose `config.hls.bucket = "..."` (the
+ActiveSupport::OrderedOptions pattern). Two reasons: typos like
+`hls.singing_ttl =` were silent on OrderedOptions but raise
+NoMethodError on the actual class, and the schema lives in code (the
+class_setting list) rather than in a hash whose contents only the
+Railtie knows about.
 
 ### State sidecar corruption
 

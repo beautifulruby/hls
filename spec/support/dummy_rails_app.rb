@@ -28,9 +28,12 @@ module DummyRailsApp
       config.root = Pathname.new(File.expand_path("../dummy", __dir__))
       config.hosts.clear
       config.secret_key_base = "test"
-      config.hls.bucket = "from-config"
       config.logger = Logger.new(IO::NULL)
     end
+
+    # Direct configuration of the gem, before the load hook fires.
+    # Mirrors what a host app's `config/initializers/hls.rb` does.
+    ActiveSupport.on_load(:hls_application_video) { bucket "from-config" }
 
     Object.const_set(:DummyApplication, app_class)
     @app = app_class.initialize!

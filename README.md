@@ -76,16 +76,20 @@ defaults from `config/initializers/hls.rb`:
 # config/initializers/hls.rb
 require "aws-sdk-s3"
 
-Rails.application.config.hls.tap do |hls|
-  hls.s3_resource = Aws::S3::Resource.new(
-    access_key_id:     ENV["VIDEO_AWS_ACCESS_KEY_ID"],
-    secret_access_key: ENV["VIDEO_AWS_SECRET_ACCESS_KEY"],
-    endpoint:          ENV["VIDEO_S3_ENDPOINT_URL"],
-    region:            "auto"
-  )
-  hls.bucket           = ENV.fetch("VIDEO_S3_BUCKET_NAME")
-  hls.signing_ttl      = 1.hour
-  hls.segment_duration = 4
+HLS.s3_resource = Aws::S3::Resource.new(
+  access_key_id:     ENV.fetch("VIDEO_AWS_ACCESS_KEY_ID"),
+  secret_access_key: ENV.fetch("VIDEO_AWS_SECRET_ACCESS_KEY"),
+  endpoint:          ENV.fetch("VIDEO_S3_ENDPOINT_URL"),
+  region:            "auto"
+)
+
+# Inside the block, `self` is HLS::ApplicationVideo, so calls like
+# `bucket "x"` go straight onto the class. Re-runs on every Zeitwerk
+# reload so dev mode keeps the values fresh.
+ActiveSupport.on_load(:hls_application_video) do
+  bucket           ENV.fetch("VIDEO_S3_BUCKET_NAME")
+  signing_ttl      1.hour
+  segment_duration 4
 end
 
 # app/videos/application_video.rb
@@ -206,8 +210,9 @@ end
 ### Configuration reference
 
 Every class-level setting on `HLS::ApplicationVideo` is inheritable
-through the class hierarchy and overridable by the host app's
-`config.hls.*`:
+through the class hierarchy. Set them on the class directly (in a
+profile, in an `ActiveSupport.on_load(:hls_application_video)` block,
+or in plain Ruby outside Rails):
 
 | Setting              | Default              | Notes |
 |----------------------|----------------------|-------|

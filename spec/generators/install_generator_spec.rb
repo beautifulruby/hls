@@ -2,10 +2,10 @@
 
 require "spec_helper"
 require "rails/generators"
-require "rails/generators/test_case"
+require "rails/generators/testing/behavior"
+require "rails/generators/testing/assertions"
 require "active_support/isolated_execution_state"
 require "active_support/core_ext/integer/time"
-require "active_support/ordered_options"
 require "generators/hls/install/install_generator"
 require_relative "../support/minitest_shims"
 
@@ -29,15 +29,16 @@ RSpec.describe Hls::Generators::InstallGenerator, type: :generator do
   before { prepare_destination }
 
   describe "config/initializers/hls.rb" do
-    it "is created with the right Rails.application.config.hls wiring" do
+    it "configures HLS objects directly — no Rails config indirection" do
       run_generator
 
       assert_file "config/initializers/hls.rb" do |content|
-        expect(content).to include("Rails.application.config.hls.tap")
-        expect(content).to include("hls.s3_resource = Aws::S3::Resource.new(")
-        expect(content).to include("hls.bucket =")
-        expect(content).to include("hls.signing_ttl = 1.hour")
-        expect(content).to include("hls.segment_duration = 4")
+        expect(content).to include("HLS.s3_resource = Aws::S3::Resource.new(")
+        expect(content).to include("ActiveSupport.on_load(:hls_application_video)")
+        expect(content).to include("bucket ENV.fetch(\"VIDEO_S3_BUCKET_NAME\")")
+        expect(content).to include("signing_ttl 1.hour")
+        expect(content).to include("segment_duration 4")
+        expect(content).not_to include("Rails.application.config.hls")
       end
     end
 
@@ -45,8 +46,8 @@ RSpec.describe Hls::Generators::InstallGenerator, type: :generator do
       run_generator
 
       assert_file "config/initializers/hls.rb" do |content|
-        expect(content).to include("# hls.ffmpeg_timeout =")
-        expect(content).to include("# hls.manifest_cache =")
+        expect(content).to include("# ffmpeg_timeout")
+        expect(content).to include("# manifest_cache")
       end
     end
   end
@@ -85,13 +86,13 @@ RSpec.describe Hls::Generators::InstallGenerator, type: :generator do
     end
   end
 
-  describe "the generated initializer evaluated in a Rails-shaped context" do
-    # Catches generator output that drifts from the Railtie's expected
-    # config interface — the initializer touches `Rails.application
-    # .config.hls.{bucket,signing_ttl,...}`, and if those names ever
-    # rename, the template would produce a broken file that nothing
-    # else tests.
-    it "sets the config keys the Railtie reads, given the right env" do
+  describe "the generated initializer evaluated end-to-end" do
+    # Catches generator output that drifts from the gem's actual API:
+    # we eval the initializer with real env vars, then trigger the
+    # :hls_application_video load hook the same way the Railtie does
+    # at boot time. If the template uses a renamed setting name or a
+    # non-existent setter, this fails loudly.
+    it "configures HLS.s3_resource and ApplicationVideo settings via the load hook" do
       run_generator
       contents = File.read(File.join(destination_root, "config/initializers/hls.rb"))
 
@@ -101,24 +102,33 @@ RSpec.describe Hls::Generators::InstallGenerator, type: :generator do
         "VIDEO_S3_ENDPOINT_URL"       => "https://example.com",
         "VIDEO_S3_BUCKET_NAME"        => "test-bucket"
       }) do
-        fake_app = Object.new
-        fake_app.define_singleton_method(:config) {
-          @cfg ||= Object.new.tap do |c|
-            c.instance_variable_set(:@hls, ActiveSupport::OrderedOptions.new)
-            c.define_singleton_method(:hls) { @hls }
-          end
-        }
+        # Read the ivar directly — calling HLS.s3_resource would
+        # eagerly construct a default Aws::S3::Resource and blow up
+        # without an AWS_REGION set in this process.
+        previous_resource = HLS.instance_variable_get(:@s3_resource)
 
-        rails_const = Object.new
-        rails_const.define_singleton_method(:application) { fake_app }
-        stub_const("Rails", rails_const)
+        # The eval'd template includes an ActiveSupport.on_load
+        # subscriber, which lingers globally. Snapshot and restore so
+        # later specs that boot Rails don't get the test's stub block
+        # firing against their app.
+        load_hooks = ActiveSupport.instance_variable_get(:@load_hooks)
+        previous_subscribers = (load_hooks[:hls_application_video] || []).dup
+
+        target = Class.new(HLS::ApplicationVideo)
+        stub_const("ApplicationVideo", target)
 
         eval(contents, TOPLEVEL_BINDING.dup, "generated_hls_initializer.rb")
+        # The Railtie fires this after :load_config_initializers; we
+        # simulate that step here.
+        ActiveSupport.run_load_hooks(:hls_application_video, target)
 
-        expect(fake_app.config.hls.bucket).to eq("test-bucket")
-        expect(fake_app.config.hls.signing_ttl).to eq(1.hour)
-        expect(fake_app.config.hls.segment_duration).to eq(4)
-        expect(fake_app.config.hls.s3_resource).to be_a(Aws::S3::Resource)
+        expect(HLS.s3_resource).to be_a(Aws::S3::Resource)
+        expect(target.bucket).to eq("test-bucket")
+        expect(target.signing_ttl).to eq(1.hour)
+        expect(target.segment_duration).to eq(4)
+      ensure
+        HLS.s3_resource = previous_resource
+        load_hooks[:hls_application_video] = previous_subscribers if load_hooks
       end
     end
 

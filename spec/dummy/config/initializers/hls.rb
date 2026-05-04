@@ -1,7 +1,10 @@
 # frozen_string_literal: true
 
-# Mirrors the production wiring: a config initializer sets HLS defaults
-# AFTER the gem's Railtie has been declared. The Railtie's apply_config
-# initializer runs AFTER :load_config_initializers, so settings here
-# end up applied to HLS::ApplicationVideo.
-Rails.application.config.hls.signing_ttl = 7200
+# Mirrors the production wiring: an initializer subscribes to the
+# :hls_application_video load hook and configures profiles directly.
+# The hook fires from the gem's Railtie after :load_config_initializers,
+# so by the time this block runs ApplicationVideo and its DSL are
+# available.
+ActiveSupport.on_load(:hls_application_video) do
+  signing_ttl 7200
+end
