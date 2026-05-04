@@ -46,11 +46,12 @@ RSpec.describe HLS::Manifest do
     )
   end
 
+  let(:storage) { HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600) }
+
   subject(:manifest) do
     described_class.new(
-      bucket: bucket,
+      storage: storage,
       path: "course/01",
-      expires_in: 3600,
       segment_duration: 4
     )
   end
@@ -93,9 +94,8 @@ RSpec.describe HLS::Manifest do
 
     it "uses a custom variant_uri callable when one is supplied" do
       custom = HLS::Manifest.new(
-        bucket: bucket,
+        storage: storage,
         path: "course/01",
-        expires_in: 3600,
         variant_uri: ->(path:, variant_index:) { "/streams/#{path}/v#{variant_index}" }
       )
 
@@ -202,7 +202,7 @@ RSpec.describe HLS::Manifest do
     it "uses the supplied cache when fetching playlists" do
       cache_inst = cache
       m1 = described_class.new(
-        bucket: bucket, path: "course/01", expires_in: 3600,
+        storage: storage, path: "course/01",
         segment_duration: 4, cache: cache_inst, cache_ttl: 60
       )
       m1.master_playlist
@@ -212,7 +212,7 @@ RSpec.describe HLS::Manifest do
     it "passes cache_ttl through to the cache backend" do
       cache_inst = cache
       m1 = described_class.new(
-        bucket: bucket, path: "course/01", expires_in: 3600,
+        storage: storage, path: "course/01",
         segment_duration: 4, cache: cache_inst, cache_ttl: 90
       )
       m1.master_playlist
@@ -246,7 +246,7 @@ RSpec.describe HLS::Manifest do
 
       shared_cache = cache
       m = described_class.new(
-        bucket: mem, path: "course/01", expires_in: 3600,
+        storage: mem, path: "course/01",
         segment_duration: 4, cache: shared_cache, cache_ttl: 60
       )
 
@@ -258,7 +258,7 @@ RSpec.describe HLS::Manifest do
 
       # Same cache, same path — we keep getting v1 until TTL expires.
       m2 = described_class.new(
-        bucket: mem, path: "course/01", expires_in: 3600,
+        storage: mem, path: "course/01",
         segment_duration: 4, cache: shared_cache, cache_ttl: 60
       )
       expect(m2.master_playlist.items.first.uri).to eq("01/v1.m3u8")
@@ -266,7 +266,7 @@ RSpec.describe HLS::Manifest do
       # A fresh cache (different host process, or expired TTL) sees v2.
       fresh_cache = cache.class.new
       m3 = described_class.new(
-        bucket: mem, path: "course/01", expires_in: 3600,
+        storage: mem, path: "course/01",
         segment_duration: 4, cache: fresh_cache, cache_ttl: 60
       )
       expect(m3.master_playlist.items.first.uri).to eq("01/v2.m3u8")
@@ -279,7 +279,7 @@ RSpec.describe HLS::Manifest do
       # only caches the master would fail loudly.
       cache_inst = cache
       m = described_class.new(
-        bucket: bucket, path: "course/01", expires_in: 3600,
+        storage: storage, path: "course/01",
         segment_duration: 4, cache: cache_inst, cache_ttl: 60
       )
       m.variants.each(&:items)
@@ -313,17 +313,18 @@ RSpec.describe HLS::Manifest do
         end
       }
       bucket.define_singleton_method(:object) { |k| counter.call(k) }
+      storage = HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600)
 
       cache_inst = cache
       m1 = described_class.new(
-        bucket: bucket, path: "course/01", expires_in: 3600,
+        storage: storage, path: "course/01",
         segment_duration: 4, cache: cache_inst
       )
       m1.master_playlist
       first_hits = hits
 
       m2 = described_class.new(
-        bucket: bucket, path: "course/01", expires_in: 3600,
+        storage: storage, path: "course/01",
         segment_duration: 4, cache: cache_inst
       )
       m2.master_playlist
@@ -370,11 +371,12 @@ RSpec.describe HLS::Manifest::Variant do
     )
   end
 
+  let(:storage) { HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600) }
+
   let(:manifest) do
     HLS::Manifest.new(
-      bucket: bucket,
+      storage: storage,
       path: "course/01",
-      expires_in: 3600,
       segment_duration: 4
     )
   end
@@ -438,56 +440,51 @@ end
 
 RSpec.describe HLS::ApplicationVideo, ".manifest" do
   let(:bucket) { StubbedBucket.build(name: "test-bucket") }
+  let(:storage) { HLS::Storage::S3.new(bucket: bucket, signing_ttl: 1800) }
   let(:profile_class) do
-    bucket_obj = bucket
+    storage_obj = storage
     Class.new(described_class).tap do |k|
-      k.bucket bucket_obj
-      k.signing_ttl 1800
+      k.storage storage_obj
       k.segment_duration 4
     end
   end
 
-  it "returns a Manifest bound to the profile's bucket and TTL" do
+  it "returns a Manifest bound to the profile's storage" do
     manifest = profile_class.manifest("foo/bar")
     expect(manifest).to be_a(HLS::Manifest)
     expect(manifest.path).to eq("foo/bar")
-    expect(manifest.expires_in).to eq(1800)
+    expect(manifest.expires_in).to eq(1800) # comes from storage.signing_ttl
     expect(manifest.segment_duration).to eq(4)
   end
 
-  it "lets the caller override expires_in" do
-    manifest = profile_class.manifest("foo/bar", expires_in: 60)
-    expect(manifest.expires_in).to eq(60)
-  end
-
-  it "raises a helpful error when bucket is unset" do
+  it "raises a helpful error when storage is unset" do
     klass = Class.new(described_class)
-    expect { klass.manifest("foo") }.to raise_error(ArgumentError, /no bucket configured/)
+    expect { klass.manifest("foo") }.to raise_error(ArgumentError, /no storage configured/)
   end
 
-  it "treats an empty-string bucket the same as nil (env-var fallback case)" do
-    klass = Class.new(described_class).tap { |k| k.bucket "" }
-    expect { klass.manifest("foo") }.to raise_error(ArgumentError, /no bucket configured/)
+  it "wires the resolved storage through to Manifest" do
+    manifest = profile_class.manifest("foo")
+    expect(manifest.storage).to be(storage)
   end
 
-  it "raises ArgumentError for a bucket of an unsupported type" do
-    klass = Class.new(described_class).tap { |k| k.bucket 12345 }
-    expect { klass.manifest("foo") }.to raise_error(ArgumentError, /Unsupported bucket value/)
-  end
+  describe "HLS::Storage::S3 lazy bucket resolution" do
+    it "resolves a bucket_name through HLS.s3_resource on first use" do
+      fake_resource = instance_double(Aws::S3::Resource)
+      fake_bucket = instance_double(Aws::S3::Bucket)
+      allow(fake_resource).to receive(:bucket).with("named-bucket").and_return(fake_bucket)
 
-  it "resolves a string bucket through HLS.s3_resource" do
-    fake_resource = instance_double(Aws::S3::Resource)
-    fake_bucket = instance_double(Aws::S3::Bucket)
-    allow(fake_resource).to receive(:bucket).with("named-bucket").and_return(fake_bucket)
+      HLS.s3_resource = fake_resource
+      begin
+        s3 = HLS::Storage::S3.new(bucket_name: "named-bucket")
+        expect(s3.bucket).to eq(fake_bucket)
+      ensure
+        HLS.s3_resource = nil
+      end
+    end
 
-    klass = Class.new(described_class).tap { |k| k.bucket "named-bucket" }
-
-    HLS.s3_resource = fake_resource
-    begin
-      manifest = klass.manifest("foo")
-      expect(manifest.bucket).to eq(fake_bucket)
-    ensure
-      HLS.s3_resource = nil
+    it "raises when neither bucket nor bucket_name are set" do
+      s3 = HLS::Storage::S3.new(bucket_name: "")
+      expect { s3.bucket }.to raise_error(ArgumentError, /bucket_name or a pre-built bucket/)
     end
   end
 end

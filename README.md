@@ -83,17 +83,17 @@ HLS.s3_resource = Aws::S3::Resource.new(
   region:            "auto"
 )
 
-# Inside the block, `self` is HLS::ApplicationVideo, so calls like
-# `bucket "x"` go straight onto the class. Re-runs on every Zeitwerk
-# reload so dev mode keeps the values fresh.
-ActiveSupport.on_load(:hls_application_video) do
-  bucket           ENV.fetch("VIDEO_S3_BUCKET_NAME")
-  signing_ttl      1.hour
-  segment_duration 4
-end
-
-# app/videos/application_video.rb
+# app/videos/application_video.rb — bucket + signing TTL live on the
+# storage adapter, configured here so every subclass under app/videos
+# inherits them. Override `def self.storage` on a subclass to point
+# at a different bucket.
 class ApplicationVideo < HLS::ApplicationVideo
+  def self.storage = HLS::Storage::S3.new(
+    bucket_name: ENV.fetch("VIDEO_S3_BUCKET_NAME"),
+    signing_ttl: 1.hour
+  )
+
+  segment_duration 4
 end
 
 # app/videos/course_video.rb
@@ -210,14 +210,13 @@ end
 ### Configuration reference
 
 Every class-level setting on `HLS::ApplicationVideo` is inheritable
-through the class hierarchy. Set them on the class directly (in a
-profile, in an `ActiveSupport.on_load(:hls_application_video)` block,
-or in plain Ruby outside Rails):
+through the class hierarchy. For static values, set with the DSL form
+(`segment_duration 4`); for dynamic values that should re-read on
+every Zeitwerk reload, override the reader (`def self.storage = ...`).
 
 | Setting              | Default              | Notes |
 |----------------------|----------------------|-------|
-| `bucket`             | _none — required_    | `Aws::S3::Bucket` or string name |
-| `signing_ttl`        | `3600`               | Pre-signed URL lifetime, seconds |
+| `storage`            | _none — required_    | `HLS::Storage::S3`, `HLS::Storage::Memory`, or any conforming adapter |
 | `segment_duration`   | `4`                  | HLS segment length, seconds |
 | `video_codec`        | `:h264`              | Symbol (auto-resolved) or string (explicit) |
 | `audio_codec`        | `"aac"`              | |
@@ -228,6 +227,11 @@ or in plain Ruby outside Rails):
 | `manifest_cache`     | `nil`                | Object responding to `fetch(key, expires_in:) { ... }` (e.g. `Rails.cache`) |
 | `manifest_cache_ttl` | `300`                | Seconds to keep cached playlists |
 
+`HLS::Storage::S3` itself takes `bucket_name:`, `signing_ttl:`, and an
+optional `s3_resource:` (defaults to `HLS.s3_resource`). For tests or
+non-AWS backends, use `HLS::Storage::Memory.new(name: ...)` or any
+object responding to `signing_ttl` and `object(key)`.
+
 ### Concurrency and retries
 
 The uploader runs PUTs in parallel with bounded concurrency and retries
@@ -236,7 +240,7 @@ typical home/office connections; override per-call:
 
 ```ruby
 HLS::Uploader.new(
-  bucket: bucket, output: out, key_prefix: prefix, state: state,
+  storage: storage, output: out, key_prefix: prefix, state: state,
   concurrency: 8,        # default 4
   max_retries: 5,        # default 3
   initial_backoff: 0.25  # default 0.5 seconds, doubles per attempt
@@ -270,28 +274,35 @@ Events:
 
 ### Storage adapters
 
-The default backend is `Aws::S3::Bucket` (works with AWS S3, Tigris,
-Cloudflare R2). Anything responding to `object(key)` and yielding a
-duck-typed object that implements `get`, `put(body:, content_type:,
-cache_control:)`, and `presigned_url(:get, expires_in:)` works as a
-drop-in. `HLS::Storage::Memory` is shipped as a no-network adapter
-useful for tests.
+The default backend is `HLS::Storage::S3`, which wraps an
+`Aws::S3::Bucket` (works with AWS S3, Tigris, Cloudflare R2, MinIO).
+`HLS::Storage::Memory` ships as a no-network adapter useful for tests.
+Roll your own by implementing the protocol — `signing_ttl` plus
+`object(key)` returning something that responds to `get`,
+`put(body:, content_type:, cache_control:)`, and
+`presigned_url(:get, expires_in:)`.
 
 #### MinIO
 
-MinIO is API-compatible with S3 — point the AWS SDK at its endpoint:
+MinIO is API-compatible with S3 — point `HLS.s3_resource` at its
+endpoint:
 
 ```ruby
 # config/initializers/hls.rb
-Rails.application.config.hls.tap do |hls|
-  hls.s3_resource = Aws::S3::Resource.new(
-    access_key_id:     ENV["MINIO_ACCESS_KEY"],
-    secret_access_key: ENV["MINIO_SECRET_KEY"],
-    endpoint:          ENV["MINIO_ENDPOINT"], # e.g. http://localhost:9000
-    region:            "us-east-1",
-    force_path_style:  true                   # required for MinIO
+HLS.s3_resource = Aws::S3::Resource.new(
+  access_key_id:     ENV["MINIO_ACCESS_KEY"],
+  secret_access_key: ENV["MINIO_SECRET_KEY"],
+  endpoint:          ENV["MINIO_ENDPOINT"], # e.g. http://localhost:9000
+  region:            "us-east-1",
+  force_path_style:  true                   # required for MinIO
+)
+
+# app/videos/application_video.rb
+class ApplicationVideo < HLS::ApplicationVideo
+  def self.storage = HLS::Storage::S3.new(
+    bucket_name: ENV.fetch("MINIO_BUCKET"),
+    signing_ttl: 1.hour
   )
-  hls.bucket = ENV.fetch("MINIO_BUCKET")
 end
 ```
 

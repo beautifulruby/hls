@@ -28,11 +28,12 @@ RSpec.describe HLS::Uploader do
     Aws::S3::Resource.new(client: client).bucket("test-bucket")
   end
 
+  let(:storage) { HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600) }
   let(:state) { HLS::State.load(@tmp) }
 
   let(:uploader) do
     described_class.new(
-      bucket: bucket,
+      storage: storage,
       output: @tmp,
       key_prefix: "videos/foo",
       state: state
@@ -165,7 +166,7 @@ RSpec.describe HLS::Uploader do
 
     it "handles an empty key_prefix without producing leading slashes" do
       uploader = described_class.new(
-        bucket: bucket,
+        storage: HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600),
         output: @tmp,
         key_prefix: "",
         state: state
@@ -179,7 +180,7 @@ RSpec.describe HLS::Uploader do
 
     it "strips leading and trailing slashes from key_prefix" do
       uploader = described_class.new(
-        bucket: bucket,
+        storage: HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600),
         output: @tmp,
         key_prefix: "/videos/foo/",
         state: state
@@ -210,7 +211,7 @@ RSpec.describe HLS::Uploader do
       bucket = Aws::S3::Resource.new(client: slow_client).bucket("test-bucket")
 
       uploader = described_class.new(
-        bucket: bucket,
+        storage: HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600),
         output: @tmp,
         key_prefix: "v",
         state: state,
@@ -235,7 +236,7 @@ RSpec.describe HLS::Uploader do
       bucket = Aws::S3::Resource.new(client: slow_client).bucket("test-bucket")
 
       uploader = described_class.new(
-        bucket: bucket,
+        storage: HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600),
         output: @tmp,
         key_prefix: "v",
         state: state,
@@ -257,7 +258,7 @@ RSpec.describe HLS::Uploader do
       bucket = Aws::S3::Resource.new(client: client).bucket("test-bucket")
 
       uploader = described_class.new(
-        bucket: bucket,
+        storage: HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600),
         output: @tmp,
         key_prefix: "v",
         state: state,
@@ -296,7 +297,7 @@ RSpec.describe HLS::Uploader do
       bucket = Aws::S3::Resource.new(client: flaky).bucket("test-bucket")
 
       uploader = described_class.new(
-        bucket: bucket,
+        storage: HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600),
         output: @tmp,
         key_prefix: "videos/foo",
         state: state,
@@ -338,7 +339,7 @@ RSpec.describe HLS::Uploader do
 
     it "retries transient failures and eventually succeeds" do
       uploader = described_class.new(
-        bucket: flaky_bucket,
+        storage: HLS::Storage::S3.new(bucket: flaky_bucket, signing_ttl: 3600),
         output: @tmp,
         key_prefix: "v",
         state: state,
@@ -355,7 +356,7 @@ RSpec.describe HLS::Uploader do
       bucket = Aws::S3::Resource.new(client: always_failing).bucket("test-bucket")
 
       uploader = described_class.new(
-        bucket: bucket,
+        storage: HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600),
         output: @tmp,
         key_prefix: "v",
         state: state,
@@ -386,7 +387,7 @@ RSpec.describe HLS::Uploader do
       bucket = Aws::S3::Resource.new(client: gone).bucket("test-bucket")
 
       uploader = described_class.new(
-        bucket: bucket,
+        storage: HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600),
         output: @tmp,
         key_prefix: "v",
         state: state,

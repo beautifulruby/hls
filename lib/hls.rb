@@ -9,12 +9,7 @@ module HLS
 
   class << self
     # The Aws::S3::Resource the gem uses when a profile's `bucket` is
-    # configured as a string name. Host apps configure this via the
-    # Railtie:
-    #
-    #   Rails.application.config.hls.s3_resource = Aws::S3::Resource.new(...)
-    #
-    # In plain-Ruby usage:
+    # configured as a string name. Set in `config/initializers/hls.rb`:
     #
     #   HLS.s3_resource = Aws::S3::Resource.new(...)
     attr_writer :s3_resource

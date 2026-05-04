@@ -75,11 +75,11 @@ RSpec.describe HLS::Storage::Memory do
   end
 end
 
-RSpec.describe HLS::ApplicationVideo, "with a duck-typed bucket" do
-  it "accepts any object responding to #object as a bucket" do
+RSpec.describe HLS::ApplicationVideo, "with a duck-typed storage" do
+  it "accepts any object that conforms to the storage protocol" do
     storage = HLS::Storage::Memory.new(name: "v")
-    klass = Class.new(described_class).tap { |k| k.bucket storage }
-    expect(klass.resolve_bucket).to be(storage)
+    klass = Class.new(described_class).tap { |k| k.storage storage }
+    expect(klass.storage_or_raise).to be(storage)
   end
 end
 
@@ -98,7 +98,7 @@ RSpec.describe HLS::Storage::Memory, "end-to-end with process + manifest" do
     output = @tmp.join("encoded")
 
     klass = Class.new(HLS::ApplicationVideo).tap do |k|
-      k.bucket storage
+      k.storage storage
       k.rendition :full, scale: 1.0
     end
 
@@ -168,7 +168,7 @@ RSpec.describe HLS::Manifest, "with the in-memory storage adapter" do
   end
 
   subject(:manifest) do
-    described_class.new(bucket: bucket, path: "course/01", expires_in: 3600)
+    described_class.new(storage: bucket, path: "course/01")
   end
 
   it "produces a master playlist via the in-memory adapter" do

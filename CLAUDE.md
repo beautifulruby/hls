@@ -247,23 +247,38 @@ is missing. Empty string is truthy in Ruby. `resolve_bucket` treats
 both `nil` and `""` as "no bucket configured" and raises. Don't
 add another path that bypasses this check.
 
-### Railtie load hook ordering
+### No Rails config bag, no load hook
 
-There is no `Rails.application.config.hls.*` config bag — host apps
-configure HLS::ApplicationVideo directly via the
-`:hls_application_video` load hook. The Railtie fires the hook
-`after: :load_config_initializers` so initializers that subscribe to
-it are registered before it runs. Without that ordering the hook
-would fire against zero subscribers and config would silently
-no-op. There's a regression test in `spec/hls/railtie_spec.rb`
-against `spec/dummy/config/initializers/hls.rb`.
+The Railtie does only two things: register `app/videos` as an
+autoload path and lazy-require `HLS::EncodeJob` when ActiveJob
+loads. There is intentionally no `Rails.application.config.hls.*`
+bag and no `:hls_application_video` load hook to subscribe to.
 
-We deliberately don't expose `config.hls.bucket = "..."` (the
-ActiveSupport::OrderedOptions pattern). Two reasons: typos like
-`hls.singing_ttl =` were silent on OrderedOptions but raise
-NoMethodError on the actual class, and the schema lives in code (the
-class_setting list) rather than in a hash whose contents only the
-Railtie knows about.
+Why? Because Zeitwerk already reloads `app/videos/*.rb` in dev, the
+class body of `ApplicationVideo` re-runs on every reload — so any
+configuration written there (env-var-derived or otherwise) refreshes
+automatically. A load hook would be redundant.
+
+Profile classes own their own configuration via the class-level DSL
+plus `def self.storage = ...` overrides. The only module-level state
+the gem keeps is `HLS.s3_resource` for the AWS SDK client.
+
+### Storage is one object that owns bucket + signing TTL
+
+Earlier versions had two separate class settings (`bucket` accepting
+String/Bucket/duck-typed thing, plus `signing_ttl`) and a
+`resolve_bucket` switch that picked an adapter based on the value
+type. That all collapsed into one `storage` setting that takes any
+object satisfying the protocol (`signing_ttl` + `object(key)`):
+
+  - `HLS::Storage::S3` is the default. It owns `bucket_name`,
+    `signing_ttl`, and an optional `s3_resource` override.
+  - `HLS::Storage::Memory` is the test/dev adapter.
+  - Any duck-typed object (future ActiveStorage adapter, custom
+    backend) plugs in the same way.
+
+`HLS::Manifest` and `HLS::Uploader` only ever talk through `storage`
+— they don't know what kind of bucket or backend is behind it.
 
 ### State sidecar corruption
 

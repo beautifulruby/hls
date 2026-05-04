@@ -50,7 +50,7 @@ RSpec.describe HLS::ApplicationVideo, "instrumentation events" do
   let(:profile_class) do
     bucket_obj = bucket
     Class.new(described_class).tap do |k|
-      k.bucket bucket_obj
+      k.storage HLS::Storage::S3.new(bucket: bucket_obj, signing_ttl: 3600)
       k.rendition :full, scale: 1.0
     end
   end
@@ -76,7 +76,7 @@ RSpec.describe HLS::ApplicationVideo, "instrumentation events" do
     end
 
     HLS::Uploader.new(
-      bucket: bucket,
+      storage: HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600),
       output: @tmp,
       key_prefix: "v",
       state: HLS::State.load(@tmp),

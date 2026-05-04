@@ -31,35 +31,39 @@ module HLS
     # `cache_ttl:` on the Manifest constructor.
     DEFAULT_CACHE_TTL = 300
 
-    attr_reader :bucket, :path, :expires_in, :segment_duration, :cache, :cache_ttl
+    attr_reader :storage, :path, :segment_duration, :cache, :cache_ttl
 
-    # bucket::          Aws::S3::Bucket (or any conforming HLS::Storage object)
-    # path::            S3 key prefix where the bundle lives
-    # expires_in::      pre-signed URL TTL in seconds
+    # storage::         An HLS::Storage adapter (S3, Memory, ...). Owns
+    #                   the bucket and the default signing TTL.
+    # path::            key prefix where the bundle lives
     # segment_duration: HLS segment length, drives Variant#duration math
     # variant_uri::     callable taking (path:, variant_index:) and
     #                   returning the URI string to put in the master
     #                   playlist for that variant. Default produces
     #                   `<basename(path)>/<index>.m3u8`, which matches a
     #                   `/videos/*path/:id/:variant` Rails route shape.
-    #                   Override it to fit a different URL scheme.
     # cache::           an object responding to `fetch(key, expires_in:)
     #                   { ... }` — `Rails.cache` is the canonical fit.
     #                   When set, raw playlists are read through it
-    #                   instead of being fetched from the bucket on
-    #                   every request. nil disables caching.
+    #                   instead of being fetched on every request. nil
+    #                   disables caching.
     # cache_ttl::       seconds to keep cached playlists. Defaults to
     #                   DEFAULT_CACHE_TTL.
-    def initialize(bucket:, path:, expires_in:,
+    def initialize(storage:, path:,
                    segment_duration: 4, variant_uri: nil,
                    cache: nil, cache_ttl: DEFAULT_CACHE_TTL)
-      @bucket           = bucket
+      @storage          = storage
       @path             = path
-      @expires_in       = Integer(expires_in)
       @segment_duration = Integer(segment_duration)
       @variant_uri      = variant_uri || DEFAULT_VARIANT_URI
       @cache            = cache
       @cache_ttl        = Integer(cache_ttl)
+    end
+
+    # Default presigned-URL TTL for this manifest. Reads from the
+    # storage adapter so signing config lives in one place.
+    def expires_in
+      storage.signing_ttl
     end
 
     DEFAULT_VARIANT_URI = ->(path:, variant_index:) {
@@ -119,7 +123,7 @@ module HLS
     private
 
     def object(*parts)
-      bucket.object(::File.join(path, *parts))
+      storage.object(::File.join(path, *parts))
     end
 
     def read_object(*parts)

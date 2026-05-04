@@ -84,13 +84,13 @@ RSpec.describe HLS::ApplicationVideo do
   end
 
   describe "class settings" do
-    it "stores and reads bucket" do
-      profile_class.bucket "videos-prod"
-      expect(profile_class.bucket).to eq("videos-prod")
+    it "stores and reads storage" do
+      s = HLS::Storage::S3.new(bucket_name: "videos-prod")
+      profile_class.storage s
+      expect(profile_class.storage).to be(s)
     end
 
     it "uses sensible defaults" do
-      expect(profile_class.signing_ttl).to eq(3600)
       expect(profile_class.segment_duration).to eq(4)
       expect(profile_class.audio_codec).to eq("aac")
       expect(profile_class.audio_bitrate).to eq(128)
@@ -98,19 +98,22 @@ RSpec.describe HLS::ApplicationVideo do
       expect(profile_class.max_bitrate_kbps).to eq(15_000)
     end
 
-    it "inherits settings from parent class" do
-      parent = Class.new(described_class) { bucket "from-parent" }
-      child = Class.new(parent)
+    it "inherits storage from parent class" do
+      s = HLS::Storage::S3.new(bucket_name: "from-parent")
+      parent = Class.new(described_class).tap { |k| k.storage s }
+      child  = Class.new(parent)
 
-      expect(child.bucket).to eq("from-parent")
+      expect(child.storage).to be(s)
     end
 
     it "child overrides parent without mutating parent" do
-      parent = Class.new(described_class) { bucket "parent-bucket" }
-      child  = Class.new(parent) { bucket "child-bucket" }
+      parent_storage = HLS::Storage::S3.new(bucket_name: "parent")
+      child_storage  = HLS::Storage::S3.new(bucket_name: "child")
+      parent = Class.new(described_class).tap { |k| k.storage parent_storage }
+      child  = Class.new(parent).tap        { |k| k.storage child_storage }
 
-      expect(child.bucket).to  eq("child-bucket")
-      expect(parent.bucket).to eq("parent-bucket")
+      expect(child.storage).to  be(child_storage)
+      expect(parent.storage).to be(parent_storage)
     end
 
     it "coerces bits_per_pixel symbols to integers" do

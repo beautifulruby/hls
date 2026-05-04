@@ -179,16 +179,14 @@ module HLS
         subclass.instance_variable_set(:@posters, posters.map(&:itself))
       end
 
-      # Returns a read-side Manifest bound to this profile's bucket and
-      # signing TTL. The host app's controller uses this to serve signed
-      # playlists.
+      # Returns a read-side Manifest bound to this profile's storage.
+      # The host app's controller uses this to serve signed playlists.
       #
       #   CourseVideo.manifest("phlex/forms/overview").master_playlist
-      def manifest(path, expires_in: signing_ttl, cache: manifest_cache, cache_ttl: manifest_cache_ttl)
+      def manifest(path, cache: manifest_cache, cache_ttl: manifest_cache_ttl)
         Manifest.new(
-          bucket: resolve_bucket,
+          storage: storage_or_raise,
           path: path,
-          expires_in: expires_in,
           segment_duration: segment_duration,
           variant_uri: method(:variant_uri),
           cache: cache,
@@ -213,47 +211,28 @@ module HLS
         "#{::File.basename(path)}/#{variant_index}.m3u8"
       end
 
-      # Resolves the configured bucket value to a usable bucket object.
-      #
-      # Accepts:
-      #   - An Aws::S3::Bucket directly
-      #   - A non-empty string name (resolved through `HLS.s3_resource`)
-      #   - Any object that responds to `object(key)` and yields a
-      #     duck-typed object implementing the storage protocol
-      #     (see HLS::Storage)
-      #
-      # The duck-typing escape hatch lets host apps swap in alternative
-      # backends — MinIO, GCS, an in-memory adapter for tests — without
-      # the gem hardcoding the AWS SDK.
-      def resolve_bucket
-        case bucket
-        when Aws::S3::Bucket
-          bucket
-        when String
-          raise missing_bucket_error if bucket.empty?
-          HLS.s3_resource.bucket(bucket)
-        when nil
-          raise missing_bucket_error
-        else
-          return bucket if bucket.respond_to?(:object)
-          raise ArgumentError, "Unsupported bucket value: #{bucket.inspect} " \
-            "(expected Aws::S3::Bucket, a String, or any object responding to #object(key))"
-        end
-      end
+      # Returns the configured storage, or raises a helpful error.
+      def storage_or_raise
+        configured = storage
+        return configured unless configured.nil?
 
-      private
-
-      def missing_bucket_error
-        ArgumentError.new(
-          "#{name || self} has no bucket configured. " \
-          "Set one with `bucket \"my-bucket\"` in the profile class or " \
-          "via Rails.application.config.hls.bucket."
-        )
+        raise ArgumentError,
+          "#{name || self} has no storage configured. Override `def self.storage` " \
+          "in the profile class with an HLS::Storage::S3 (or any object responding " \
+          "to #object and #signing_ttl)."
       end
     end
 
-    class_setting :bucket
-    class_setting :signing_ttl,      default: 3600
+    # The storage backend (HLS::Storage::S3 or any conforming adapter).
+    # Override per-profile with:
+    #
+    #   class ApplicationVideo < HLS::ApplicationVideo
+    #     def self.storage = HLS::Storage::S3.new(
+    #       bucket_name: ENV.fetch("VIDEO_S3_BUCKET_NAME"),
+    #       signing_ttl: 1.hour
+    #     )
+    #   end
+    class_setting :storage
     class_setting :segment_duration, default: 4
     class_setting :audio_codec,      default: "aac"
     class_setting :audio_bitrate,    default: 128
@@ -313,7 +292,7 @@ module HLS
           end
 
           result = HLS::Uploader.new(
-            bucket: self.class.resolve_bucket,
+            storage: self.class.storage_or_raise,
             output: output,
             key_prefix: key_prefix,
             state: state

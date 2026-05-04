@@ -98,11 +98,11 @@ RSpec.describe Hls::Generators::VideoGenerator, type: :generator do
       Object.send(:remove_const, :CourseVideo) if defined?(::CourseVideo)
     end
 
-    it "produces a class whose .manifest method works against a Memory bucket" do
+    it "produces a class whose .manifest method works against a Memory storage" do
       run_generator ["Lecture"]
       load File.join(destination_root, "app/videos/lecture_video.rb")
 
-      ::LectureVideo.bucket(HLS::Storage::Memory.new(name: "test"))
+      ::LectureVideo.storage(HLS::Storage::Memory.new(name: "test"))
       manifest = ::LectureVideo.manifest("foo/bar")
       expect(manifest).to be_a(HLS::Manifest)
       expect(manifest.path).to eq("foo/bar")

@@ -44,14 +44,19 @@ RSpec.describe "HLS in a Rails app", type: :integration do
     end
 
     before do
-      # Configure the autoloaded CourseVideo profile to upload through
-      # the stubbed bucket.
-      @previous_bucket = CourseVideo.bucket
-      CourseVideo.bucket bucket
+      # Override the autoloaded CourseVideo's storage with the stubbed
+      # one. The dummy ApplicationVideo defines storage via
+      # `def self.storage = ...` so we redefine the singleton method
+      # with a closure to inject our test value (a writer wouldn't
+      # take effect — the override would still recompute).
+      stub = HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600)
+      CourseVideo.singleton_class.alias_method(:_original_storage, :storage)
+      CourseVideo.define_singleton_method(:storage) { stub }
     end
 
     after do
-      CourseVideo.bucket @previous_bucket
+      CourseVideo.singleton_class.alias_method(:storage, :_original_storage)
+      CourseVideo.singleton_class.remove_method(:_original_storage)
     end
 
     it "encodes, uploads, and produces a bundle the Manifest can serve" do
@@ -121,7 +126,9 @@ RSpec.describe "HLS in a Rails app", type: :integration do
       # from the resulting files. This mirrors production: files already
       # exist in S3 when the controller asks for them.
       encoder_class = Class.new(HLS::ApplicationVideo).tap do |k|
-        k.bucket "encode-only" # placeholder; we don't upload from this class
+        # Placeholder storage; we don't upload from this class so no
+        # network ever happens.
+        k.storage HLS::Storage::S3.new(bucket_name: "encode-only")
         k.video_codec "libx264"
         k.audio_codec "aac"
         k.audio_bitrate 64
@@ -156,7 +163,9 @@ RSpec.describe "HLS in a Rails app", type: :integration do
       })
       bucket = Aws::S3::Resource.new(client: client).bucket("test-bucket")
 
-      reader_class = Class.new(HLS::ApplicationVideo).tap { |k| k.bucket bucket }
+      reader_class = Class.new(HLS::ApplicationVideo).tap do |k|
+        k.storage HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600)
+      end
       stub_const("PipelineTestVideo", reader_class)
     end
 

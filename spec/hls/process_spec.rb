@@ -41,7 +41,7 @@ RSpec.describe HLS::ApplicationVideo, "#process orchestration" do
   let(:profile_class) do
     bucket_obj = bucket
     Class.new(described_class).tap do |k|
-      k.bucket bucket_obj
+      k.storage HLS::Storage::S3.new(bucket: bucket_obj, signing_ttl: 3600)
       k.rendition :full, scale: 1.0
     end
   end

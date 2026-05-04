@@ -14,7 +14,7 @@ RSpec.describe HLS::EncodeJob do
 
   let(:profile_class) do
     stub_const("TestProfileForJob", Class.new(HLS::ApplicationVideo).tap do |k|
-      k.bucket "test-bucket"
+      k.storage HLS::Storage::S3.new(bucket_name: "test-bucket")
       k.rendition :full, scale: 1.0
     end)
   end

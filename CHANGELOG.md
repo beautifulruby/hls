@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- **`HLS::Storage::S3` is now the default storage adapter** and owns
+  `bucket_name` + `signing_ttl`. The polymorphic `bucket` setting on
+  `HLS::ApplicationVideo` (and the matching `signing_ttl` setting and
+  `resolve_bucket` method) are removed. Configure profiles like:
+
+      class ApplicationVideo < HLS::ApplicationVideo
+        def self.storage = HLS::Storage::S3.new(
+          bucket_name: ENV.fetch("VIDEO_S3_BUCKET_NAME"),
+          signing_ttl: 1.hour
+        )
+      end
+
+  `HLS::Manifest` and `HLS::Uploader` now take `storage:` instead of
+  `bucket:` (and `Manifest` no longer takes `expires_in:` — it reads
+  it from `storage.signing_ttl`).
+
+- **The Railtie no longer fires the `:hls_application_video` load
+  hook**, no longer registers a `Rails.application.config.hls` config
+  bag, and no longer copies values onto profile classes via a
+  separate initializer. Settings live on the profile classes directly
+  (Zeitwerk reloads handle dev-mode freshness). Initializers shrink to
+  one line: `HLS.s3_resource = Aws::S3::Resource.new(...)`.
+
 ### Added
 
 - **Rails generators.** `bin/rails g hls:install` scaffolds

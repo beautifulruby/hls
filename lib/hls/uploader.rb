@@ -53,14 +53,14 @@ module HLS
       Aws::S3::Errors::InternalError
     ].freeze
 
-    attr_reader :bucket, :output, :key_prefix, :state,
+    attr_reader :storage, :output, :key_prefix, :state,
                 :max_retries, :initial_backoff, :concurrency
 
-    def initialize(bucket:, output:, key_prefix:, state:,
+    def initialize(storage:, output:, key_prefix:, state:,
                    max_retries: DEFAULT_MAX_RETRIES,
                    initial_backoff: DEFAULT_INITIAL_BACKOFF,
                    concurrency: DEFAULT_CONCURRENCY)
-      @bucket = bucket
+      @storage = storage
       @output = Pathname.new(output)
       @key_prefix = key_prefix.to_s.sub(%r{\A/}, "").sub(%r{/\z}, "")
       @state = state
@@ -138,7 +138,7 @@ module HLS
         key: key, bytes: file.size, content_type: ct
       ) do
         with_retries(key: key) do
-          object = bucket.object(key)
+          object = storage.object(key)
           response = object.put(
             body: file.open("rb"),
             content_type: ct,

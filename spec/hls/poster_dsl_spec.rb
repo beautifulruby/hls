@@ -132,7 +132,7 @@ RSpec.describe HLS::ApplicationVideo, "poster DSL" do
     let(:profile_class) do
       bucket_obj = bucket
       Class.new(described_class).tap do |k|
-        k.bucket bucket_obj
+        k.storage HLS::Storage::S3.new(bucket: bucket_obj, signing_ttl: 3600)
         k.rendition :full, scale: 1.0
         k.poster :hero, scale: 1.0
       end
@@ -187,7 +187,10 @@ RSpec.describe HLS::Manifest, "#poster_url with names" do
   end
 
   subject(:manifest) do
-    described_class.new(bucket: bucket, path: "course/01", expires_in: 3600)
+    described_class.new(
+      storage: HLS::Storage::S3.new(bucket: bucket, signing_ttl: 3600),
+      path: "course/01"
+    )
   end
 
   it "defaults to poster.jpg for back-compat" do
