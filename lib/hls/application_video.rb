@@ -183,14 +183,13 @@ module HLS
       # The host app's controller uses this to serve signed playlists.
       #
       #   CourseVideo.manifest("phlex/forms/overview").master_playlist
-      def manifest(path, cache: manifest_cache, cache_ttl: manifest_cache_ttl)
+      def manifest(path, cache: self.cache)
         Manifest.new(
           storage: storage_or_raise,
           path: path,
           segment_duration: segment_duration,
           variant_uri: method(:variant_uri),
-          cache: cache,
-          cache_ttl: cache_ttl
+          cache: cache
         )
       end
 
@@ -244,11 +243,13 @@ module HLS
     # longest video you intend to encode.
     class_setting :ffmpeg_timeout, default: nil
 
-    # Optional cache backend used by the read-side Manifest to avoid
-    # repeated S3 GETs for hot playlists. Anything implementing
-    # `fetch(key, expires_in:) { ... }` (Rails.cache fits) works.
-    class_setting :manifest_cache, default: nil
-    class_setting :manifest_cache_ttl, default: Manifest::DEFAULT_CACHE_TTL
+    # Optional read-side playlist cache. An HLS::Cache groups a backend
+    # (e.g. Rails.cache) with a TTL. Anything responding to
+    # `fetch(key, &block)` also works directly — the wrapper is just
+    # the convenience for backends that need a TTL hint.
+    #
+    #   def self.cache = HLS::Cache.new(backend: Rails.cache, ttl: 5.minutes)
+    class_setting :cache, default: nil
     class_setting :bits_per_pixel,
       default: BITS_PER_PIXEL.fetch(:mixed),
       coerce: ->(v) { v.is_a?(Symbol) ? BITS_PER_PIXEL.fetch(v) : Integer(v) }

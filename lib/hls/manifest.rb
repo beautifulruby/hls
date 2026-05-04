@@ -25,13 +25,7 @@ module HLS
     MASTER_PLAYLIST = "index.m3u8"
     VARIANT_PLAYLIST = "index.m3u8"
 
-    # Default playlist cache TTL when a cache backend is supplied. Long
-    # enough that hot videos avoid most S3 round-trips, short enough
-    # that re-encoding takes effect within minutes. Override via
-    # `cache_ttl:` on the Manifest constructor.
-    DEFAULT_CACHE_TTL = 300
-
-    attr_reader :storage, :path, :segment_duration, :cache, :cache_ttl
+    attr_reader :storage, :path, :segment_duration, :cache
 
     # storage::         An HLS::Storage adapter (S3, Memory, ...). Owns
     #                   the bucket and the default signing TTL.
@@ -42,22 +36,18 @@ module HLS
     #                   playlist for that variant. Default produces
     #                   `<basename(path)>/<index>.m3u8`, which matches a
     #                   `/videos/*path/:id/:variant` Rails route shape.
-    # cache::           an object responding to `fetch(key, expires_in:)
-    #                   { ... }` — `Rails.cache` is the canonical fit.
-    #                   When set, raw playlists are read through it
-    #                   instead of being fetched on every request. nil
-    #                   disables caching.
-    # cache_ttl::       seconds to keep cached playlists. Defaults to
-    #                   DEFAULT_CACHE_TTL.
+    # cache::           an HLS::Cache (or any object responding to
+    #                   `fetch(key, &block)`). When set, raw playlists
+    #                   are read through it instead of being fetched on
+    #                   every request. nil disables caching.
     def initialize(storage:, path:,
                    segment_duration: 4, variant_uri: nil,
-                   cache: nil, cache_ttl: DEFAULT_CACHE_TTL)
+                   cache: nil)
       @storage          = storage
       @path             = path
       @segment_duration = Integer(segment_duration)
       @variant_uri      = variant_uri || DEFAULT_VARIANT_URI
       @cache            = cache
-      @cache_ttl        = Integer(cache_ttl)
     end
 
     # Default presigned-URL TTL for this manifest. Reads from the
@@ -136,12 +126,14 @@ module HLS
 
     # Reads a key's bytes through the cache when one is configured;
     # otherwise hits the bucket directly. Cache keys include the bucket
-    # path so two manifests on different prefixes don't collide.
+    # path so two manifests on different prefixes don't collide. The
+    # TTL lives on the cache object itself (HLS::Cache wraps a backend
+    # with a TTL); raw `Rails.cache` works too but uses its default TTL.
     def cached_object_body(*parts)
       return read_object(*parts) if cache.nil?
 
       key = "hls/manifest/#{::File.join(path, *parts)}"
-      cache.fetch(key, expires_in: cache_ttl) { read_object(*parts) }
+      cache.fetch(key) { read_object(*parts) }
     end
 
     # The raw, untouched master playlist as ffmpeg wrote it. Kept private

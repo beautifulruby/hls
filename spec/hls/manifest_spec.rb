@@ -203,21 +203,31 @@ RSpec.describe HLS::Manifest do
       cache_inst = cache
       m1 = described_class.new(
         storage: storage, path: "course/01",
-        segment_duration: 4, cache: cache_inst, cache_ttl: 60
+        segment_duration: 4, cache: HLS::Cache.new(backend: cache_inst, ttl: 60)
       )
       m1.master_playlist
       expect(cache_inst.store.keys).to include("hls/manifest/course/01/index.m3u8")
     end
 
-    it "passes cache_ttl through to the cache backend" do
+    it "passes the wrapper's TTL through to the underlying backend" do
       cache_inst = cache
       m1 = described_class.new(
         storage: storage, path: "course/01",
-        segment_duration: 4, cache: cache_inst, cache_ttl: 90
+        segment_duration: 4, cache: HLS::Cache.new(backend: cache_inst, ttl: 90)
       )
       m1.master_playlist
       _body, ttl = cache_inst.store["hls/manifest/course/01/index.m3u8"]
       expect(ttl).to eq(90)
+    end
+
+    it "accepts a raw fetch-shaped object directly (no HLS::Cache wrapper)" do
+      cache_inst = cache
+      m1 = described_class.new(
+        storage: storage, path: "course/01",
+        segment_duration: 4, cache: cache_inst
+      )
+      m1.master_playlist
+      expect(cache_inst.store.keys).to include("hls/manifest/course/01/index.m3u8")
     end
 
     it "returns stale data until TTL expires (intentional tradeoff)" do
@@ -244,10 +254,10 @@ RSpec.describe HLS::Manifest do
         objects: { "course/01/index.m3u8" => v1 }
       )
 
-      shared_cache = cache
+      shared_cache = HLS::Cache.new(backend: cache, ttl: 60)
       m = described_class.new(
         storage: mem, path: "course/01",
-        segment_duration: 4, cache: shared_cache, cache_ttl: 60
+        segment_duration: 4, cache: shared_cache
       )
 
       first = m.master_playlist
@@ -259,15 +269,15 @@ RSpec.describe HLS::Manifest do
       # Same cache, same path — we keep getting v1 until TTL expires.
       m2 = described_class.new(
         storage: mem, path: "course/01",
-        segment_duration: 4, cache: shared_cache, cache_ttl: 60
+        segment_duration: 4, cache: shared_cache
       )
       expect(m2.master_playlist.items.first.uri).to eq("01/v1.m3u8")
 
       # A fresh cache (different host process, or expired TTL) sees v2.
-      fresh_cache = cache.class.new
+      fresh_cache = HLS::Cache.new(backend: cache.class.new, ttl: 60)
       m3 = described_class.new(
         storage: mem, path: "course/01",
-        segment_duration: 4, cache: fresh_cache, cache_ttl: 60
+        segment_duration: 4, cache: fresh_cache
       )
       expect(m3.master_playlist.items.first.uri).to eq("01/v2.m3u8")
     end
@@ -280,7 +290,7 @@ RSpec.describe HLS::Manifest do
       cache_inst = cache
       m = described_class.new(
         storage: storage, path: "course/01",
-        segment_duration: 4, cache: cache_inst, cache_ttl: 60
+        segment_duration: 4, cache: HLS::Cache.new(backend: cache_inst, ttl: 60)
       )
       m.variants.each(&:items)
 

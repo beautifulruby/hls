@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`HLS::Cache` groups the playlist cache backend with its TTL.** The
+  separate `manifest_cache` + `manifest_cache_ttl` class settings (and
+  the `cache_ttl:` kwarg on `HLS::Manifest.new`) are gone. Configure
+  one object on the profile:
+
+      class ApplicationVideo < HLS::ApplicationVideo
+        def self.cache = HLS::Cache.new(backend: Rails.cache, ttl: 5.minutes)
+      end
+
+  `HLS::Manifest` accepts an `HLS::Cache` or any object responding to
+  `fetch(key, &block)` (raw `Rails.cache` still works — it just uses
+  the cache's own default TTL).
+
 - **`HLS::Storage::S3` is now the default storage adapter** and owns
   `bucket_name` + `signing_ttl`. The polymorphic `bucket` setting on
   `HLS::ApplicationVideo` (and the matching `signing_ttl` setting and
@@ -76,8 +89,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `presigned_url`. `HLS::Storage::Memory` ships as a no-network
   adapter for tests. Documented MinIO setup in README.
 - **Pluggable Manifest cache.** Read-side Manifest accepts a `cache:`
-  backend (anything with `fetch(key, expires_in:) { ... }` —
-  `Rails.cache` fits) and `cache_ttl:` to cut S3 GETs for hot videos.
+  object (an `HLS::Cache` wrapping a `Rails.cache`-shaped backend, or
+  any object responding to `fetch(key, &block)`) to cut S3 GETs for
+  hot videos.
 - **`resolve_variants_under` RSpec matcher.** Public test helper that
   catches the variant-URI-doubling bug class by simulating RFC 3986
   resolution against the master URL.

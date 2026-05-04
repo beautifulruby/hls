@@ -224,8 +224,7 @@ every Zeitwerk reload, override the reader (`def self.storage = ...`).
 | `bits_per_pixel`     | `:mixed` (4)         | `:screencast` (3), `:mixed` (4), `:motion` (6) |
 | `max_bitrate_kbps`   | `15_000`             | Caps scaled-rendition bitrate |
 | `ffmpeg_timeout`     | `nil`                | Hard cap (seconds) on a single ffmpeg run; `nil` disables |
-| `manifest_cache`     | `nil`                | Object responding to `fetch(key, expires_in:) { ... }` (e.g. `Rails.cache`) |
-| `manifest_cache_ttl` | `300`                | Seconds to keep cached playlists |
+| `cache`              | `nil`                | `HLS::Cache` (groups a `Rails.cache`-shaped backend with a TTL) or any object responding to `fetch(key, &block)` |
 
 `HLS::Storage::S3` itself takes `bucket_name:`, `signing_ttl:`, and an
 optional `s3_resource:` (defaults to `HLS.s3_resource`). For tests or
