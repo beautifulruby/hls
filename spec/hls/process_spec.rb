@@ -122,6 +122,43 @@ RSpec.describe HLS::ApplicationVideo, "#process orchestration" do
     expect(put_calls).not_to be_empty
   end
 
+  it "re-encodes when the profile config digest changes (e.g. audio_bitrate bumped)" do
+    # Same input bytes, but a profile-config change (different
+    # audio_bitrate) must invalidate the recorded encode and force
+    # ffmpeg to run again. Without config-aware idempotency, bumping a
+    # codec setting silently does nothing on re-run.
+    p1 = stub_encode_with_files(
+      profile_class.new(input: input, output: output, key_prefix: "videos/foo")
+    )
+    p1.process
+
+    bumped_class = Class.new(profile_class).tap do |k|
+      k.audio_bitrate 256  # parent uses default 128
+    end
+    p2 = bumped_class.new(input: input, output: output, key_prefix: "videos/foo")
+    re_encoded = false
+    allow(p2).to receive(:encode!) do
+      re_encoded = true
+      output.join("0/0.ts").write("re-encoded segment bytes" * 50)
+    end
+    put_calls.clear
+
+    p2.process
+
+    expect(re_encoded).to be(true)
+    expect(put_calls).not_to be_empty
+  end
+
+  it "config_digest is stable across instances with the same profile config" do
+    # Sanity check: two instances of the same class on the same input
+    # must produce identical config digests, otherwise idempotency is
+    # accidentally broken on every process restart.
+    a = profile_class.new(input: input, output: output)
+    b = profile_class.new(input: input, output: output)
+    expect(a.config_digest).to eq(b.config_digest)
+    expect(a.config_digest).to start_with("sha256:")
+  end
+
   it "re-encodes when state says encoded but the master playlist file is missing" do
     p1 = stub_encode_with_files(
       profile_class.new(input: input, output: output, key_prefix: "videos/foo")

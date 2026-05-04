@@ -2,6 +2,7 @@
 
 require "aws-sdk-s3"
 require "digest"
+require "json"
 require "open3"
 require "pathname"
 require "set"
@@ -286,6 +287,7 @@ module HLS
             verify_encode!
             state.record_encode(
               input_digest: input_digest,
+              config_digest: config_digest,
               profile: self.class.name,
               renditions: renditions.map(&:to_h)
             )
@@ -404,6 +406,30 @@ module HLS
       @input_digest ||= "sha256:#{Digest::SHA256.file(input.path.to_s).hexdigest}"
     end
 
+    # SHA256 digest of the encode-affecting profile config — settings
+    # and DSL declarations that change the output bytes ffmpeg writes.
+    # Combined with `input_digest` to decide whether `process` can skip
+    # the encode step. Bumping `audio_bitrate`, swapping a codec, or
+    # adding a rendition changes this digest and forces a re-encode.
+    #
+    # Excluded: settings that don't change the encoded bytes
+    # (`storage`, `cache`, `ffmpeg_timeout`, `variant_uri`).
+    def config_digest
+      @config_digest ||= begin
+        payload = {
+          segment_duration: self.class.segment_duration,
+          video_codec:      self.class.video_codec.to_s,
+          audio_codec:      self.class.audio_codec,
+          audio_bitrate:    self.class.audio_bitrate,
+          bits_per_pixel:   self.class.bits_per_pixel,
+          max_bitrate_kbps: self.class.max_bitrate_kbps,
+          renditions:       self.class.renditions.map(&:to_h),
+          posters:          self.class.posters.map(&:to_h)
+        }
+        "sha256:#{Digest::SHA256.hexdigest(JSON.generate(payload))}"
+      end
+    end
+
     # Renditions resolved against this instance's input.
     def renditions
       @renditions ||= self.class.renditions.map do |declaration|
@@ -443,12 +469,15 @@ module HLS
 
     private
 
-    # An "encoded" state requires both the sidecar saying so AND the
+    # An "encoded" state requires the sidecar saying so AND the
     # master playlist actually being on disk. Without the file check
     # we'd happily skip encode and try to upload nothing if someone
-    # wiped the output dir but left state.json behind.
+    # wiped the output dir but left state.json behind. The sidecar
+    # check covers both input and profile config — bumping a setting
+    # like `audio_bitrate` invalidates the encode even if the input
+    # is byte-identical.
     def encoded?(state)
-      state.encoded?(input_digest: input_digest) &&
+      state.encoded?(input_digest: input_digest, config_digest: config_digest) &&
         output.join(PLAYLIST).exist?
     end
 

@@ -46,17 +46,25 @@ RSpec.describe HLS::State do
     let(:state) { described_class.load(@tmp) }
 
     it "is false until #record_encode is called" do
-      expect(state.encoded?(input_digest: "sha256:abc")).to be(false)
+      expect(state.encoded?(input_digest: "sha256:abc", config_digest: "sha256:cfg")).to be(false)
     end
 
-    it "is true after recording the same digest" do
-      state.record_encode(input_digest: "sha256:abc", profile: "X", renditions: [])
-      expect(state.encoded?(input_digest: "sha256:abc")).to be(true)
+    it "is true after recording matching input + config digests" do
+      state.record_encode(input_digest: "sha256:abc", config_digest: "sha256:cfg",
+                          profile: "X", renditions: [])
+      expect(state.encoded?(input_digest: "sha256:abc", config_digest: "sha256:cfg")).to be(true)
     end
 
     it "is false when the input digest has changed" do
-      state.record_encode(input_digest: "sha256:abc", profile: "X", renditions: [])
-      expect(state.encoded?(input_digest: "sha256:def")).to be(false)
+      state.record_encode(input_digest: "sha256:abc", config_digest: "sha256:cfg",
+                          profile: "X", renditions: [])
+      expect(state.encoded?(input_digest: "sha256:def", config_digest: "sha256:cfg")).to be(false)
+    end
+
+    it "is false when the config digest has changed (e.g. audio_bitrate bumped)" do
+      state.record_encode(input_digest: "sha256:abc", config_digest: "sha256:cfg",
+                          profile: "X", renditions: [])
+      expect(state.encoded?(input_digest: "sha256:abc", config_digest: "sha256:other")).to be(false)
     end
   end
 
@@ -82,7 +90,8 @@ RSpec.describe HLS::State do
     it "resets the uploads map (content has changed)" do
       state = described_class.load(@tmp)
       state.record_upload(relative_key: "0/0.ts", digest: "abc")
-      state.record_encode(input_digest: "sha256:new", profile: "X", renditions: [])
+      state.record_encode(input_digest: "sha256:new", config_digest: "sha256:cfg",
+                          profile: "X", renditions: [])
       expect(state.uploads).to be_empty
     end
   end
@@ -90,7 +99,8 @@ RSpec.describe HLS::State do
   describe "#save" do
     it "persists state as JSON readable by .load" do
       state = described_class.load(@tmp)
-      state.record_encode(input_digest: "sha256:abc", profile: "X", renditions: [{ width: 100, height: 100, bitrate: 100 }])
+      state.record_encode(input_digest: "sha256:abc", config_digest: "sha256:cfg",
+                          profile: "X", renditions: [{ width: 100, height: 100, bitrate: 100 }])
       state.record_upload(relative_key: "0/0.ts", digest: "ff")
       state.save
 
@@ -102,7 +112,7 @@ RSpec.describe HLS::State do
     it "creates parent directories if they don't exist" do
       nested = @tmp.join("a/b/c")
       state = described_class.load(nested)
-      state.record_encode(input_digest: "x", profile: "Y", renditions: [])
+      state.record_encode(input_digest: "x", config_digest: "c", profile: "Y", renditions: [])
       expect { state.save }.not_to raise_error
       expect(nested.join(described_class::FILENAME)).to exist
     end

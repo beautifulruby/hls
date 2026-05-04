@@ -81,7 +81,8 @@ RSpec.describe HLS::Lock do
     pid_a = fork do
       HLS::Lock.acquire(@tmp) do
         state = HLS::State.load(@tmp)
-        state.record_encode(input_digest: "sha256:abc", profile: "A", renditions: [])
+        state.record_encode(input_digest: "sha256:abc", config_digest: "sha256:cfg",
+                            profile: "A", renditions: [])
         state.record_upload(relative_key: "0/0.ts", digest: "deadbeef", etag: "a-etag")
         state.save
         @tmp.join("a-recorded").write("y")

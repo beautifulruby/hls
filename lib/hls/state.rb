@@ -38,6 +38,7 @@ module HLS
     def self.default_data
       {
         input_digest: nil,
+        config_digest: nil,
         profile: nil,
         renditions: [],
         encoded_at: nil,
@@ -52,15 +53,21 @@ module HLS
       @data = data
     end
 
-    def input_digest = @data[:input_digest]
-    def profile      = @data[:profile]
-    def renditions   = @data[:renditions]
-    def encoded_at   = @data[:encoded_at]
-    def uploads      = @data[:uploads]
+    def input_digest  = @data[:input_digest]
+    def config_digest = @data[:config_digest]
+    def profile       = @data[:profile]
+    def renditions    = @data[:renditions]
+    def encoded_at    = @data[:encoded_at]
+    def uploads       = @data[:uploads]
 
-    # Has this output already been encoded for the given input?
-    def encoded?(input_digest:)
-      !@data[:encoded_at].nil? && @data[:input_digest] == input_digest
+    # Has this output already been encoded for the given input AND
+    # profile config? A change to either invalidates the encode —
+    # bumping `audio_bitrate` or adding a rendition has to re-run
+    # ffmpeg even if the input file is byte-identical.
+    def encoded?(input_digest:, config_digest:)
+      !@data[:encoded_at].nil? &&
+        @data[:input_digest]  == input_digest &&
+        @data[:config_digest] == config_digest
     end
 
     # Has the file at relative_key already been uploaded with the given digest?
@@ -69,13 +76,14 @@ module HLS
       !upload.nil? && upload[:digest] == digest
     end
 
-    def record_encode(input_digest:, profile:, renditions:)
-      @data[:input_digest] = input_digest
-      @data[:profile]      = profile
-      @data[:renditions]   = renditions
-      @data[:encoded_at]   = Time.now.utc.iso8601
+    def record_encode(input_digest:, config_digest:, profile:, renditions:)
+      @data[:input_digest]  = input_digest
+      @data[:config_digest] = config_digest
+      @data[:profile]       = profile
+      @data[:renditions]    = renditions
+      @data[:encoded_at]    = Time.now.utc.iso8601
       # Content has changed; previous upload records are stale.
-      @data[:uploads]      = {}
+      @data[:uploads]       = {}
     end
 
     def record_upload(relative_key:, digest:, etag: nil)

@@ -47,6 +47,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Config-aware encode idempotency.** The state sidecar now records
+  a `config_digest` alongside `input_digest` — a SHA256 of the
+  encode-affecting profile config (renditions, posters, codecs,
+  bitrates, segment_duration, bits_per_pixel). `process` re-runs
+  ffmpeg when *either* the input bytes or the profile config has
+  changed since the last successful encode. Previously, bumping
+  `audio_bitrate` or adding a rendition was a silent no-op on
+  re-run. Settings that don't affect output bytes (`storage`,
+  `cache`, `ffmpeg_timeout`, `variant_uri`) are excluded.
 - **Rails generators.** `bin/rails g hls:install` scaffolds
   `config/initializers/hls.rb` and `app/videos/application_video.rb`.
   `bin/rails g hls:video NAME` writes a per-content-type profile under
