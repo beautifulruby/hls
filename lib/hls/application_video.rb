@@ -592,8 +592,7 @@ module HLS
         [
           "-profile:v:#{index}", "high",
           "-level:v:#{index}", "4.1",
-          "-preset:v:#{index}", "slow",
-          "-tune:v:#{index}", "animation"
+          "-preset:v:#{index}", "slow"
         ]
       else
         []

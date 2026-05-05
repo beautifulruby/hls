@@ -180,7 +180,7 @@ RSpec.describe "end-to-end encode and poster pipeline" do
   end
 
   describe "codec options actually land in the encoded segments" do
-    # Unit specs assert "-tune animation" appears in the command array,
+    # Unit specs assert that codec flags appear in the command array,
     # but that's just an array assertion — ffmpeg might silently ignore
     # an unknown flag, or a future ffmpeg might rename it. This spec
     # encodes for real and ffprobes the output to verify the codec

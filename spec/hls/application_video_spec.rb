@@ -204,15 +204,19 @@ RSpec.describe HLS::ApplicationVideo do
     it "emits libx264-specific options when libx264 is selected" do
       profile_class.video_codec "libx264"
       cmd = profile.command
+      expect(cmd).to include("-profile:v:0", "high")
+      expect(cmd).to include("-level:v:0", "4.1")
       expect(cmd).to include("-preset:v:0", "slow")
-      expect(cmd).to include("-tune:v:0", "animation")
+      # No -tune by default — libx264's psy-RD model is the right
+      # generic choice across screencast, talking-head, and motion video.
+      expect(cmd).not_to include("-tune:v:0")
     end
 
     it "omits libx264 options for h264_videotoolbox" do
       profile_class.video_codec "h264_videotoolbox"
       cmd = profile.command
       expect(cmd).not_to include("-preset:v:0")
-      expect(cmd).not_to include("-tune:v:0")
+      expect(cmd).not_to include("-profile:v:0")
     end
 
     it "writes one var_stream_map entry per downscaleable rendition" do
