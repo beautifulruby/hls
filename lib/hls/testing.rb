@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "open3"
 require "pathname"
 require "tmpdir"
 require "uri"
@@ -59,9 +60,15 @@ module HLS
 
     # Probes a media file with ffprobe and returns its parsed metadata.
     def probe(path)
-      raw = `ffprobe -v error -select_streams v:0 -show_entries stream=width,height,codec_name -of json "#{path}"`
-      raise HLS::Error, "ffprobe failed for #{path}" unless $?.success?
-      JSON.parse(raw)
+      stdout, _stderr, status = Open3.capture3(
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height,codec_name",
+        "-of", "json",
+        path.to_s
+      )
+      raise HLS::Error, "ffprobe failed for #{path}" unless status.success?
+      JSON.parse(stdout)
     end
 
     # Returns [width, height] for an image or video file.

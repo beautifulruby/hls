@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "aws-sdk-s3"
 require "m3u8"
 
 module HLS

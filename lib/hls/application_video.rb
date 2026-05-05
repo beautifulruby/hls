@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "aws-sdk-s3"
 require "digest"
 require "json"
 require "open3"
@@ -119,8 +118,11 @@ module HLS
         end
       end
 
+      # Renditions declared on this class. On first access in a subclass,
+      # we initialize from the parent's list so subclasses inherit
+      # naturally without an `inherited` hook reaching into them.
       def renditions
-        @renditions ||= []
+        @renditions ||= superclass.respond_to?(:renditions) ? superclass.renditions.dup : []
       end
 
       # Declare a rendition. Two forms:
@@ -146,8 +148,10 @@ module HLS
         @renditions = []
       end
 
+      # Posters declared on this class. Same lazy-inherit pattern as
+      # `renditions` — see the comment there.
       def posters
-        @posters ||= []
+        @posters ||= superclass.respond_to?(:posters) ? superclass.posters.dup : []
       end
 
       # Declare a poster image. Two forms:
@@ -170,14 +174,6 @@ module HLS
 
       def reset_posters!
         @posters = []
-      end
-
-      def inherited(subclass)
-        super
-        # Each subclass starts with a copy of the parent's renditions
-        # and posters. Subclass mutations don't leak back to the parent.
-        subclass.instance_variable_set(:@renditions, renditions.map(&:itself))
-        subclass.instance_variable_set(:@posters, posters.map(&:itself))
       end
 
       # Returns a read-side Manifest bound to this profile's storage.
