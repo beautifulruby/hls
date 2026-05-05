@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "open3"
+require "set"
+
 module HLS
   # Codec resolution for ffmpeg.
   #
@@ -76,10 +79,10 @@ module HLS
     end
 
     def probe_encoders
-      raw = `ffmpeg -hide_banner -encoders 2>/dev/null`
-      return Set.new unless $?.success?
+      stdout, _stderr, status = Open3.capture3("ffmpeg", "-hide_banner", "-encoders")
+      return Set.new unless status.success?
 
-      raw.lines.filter_map do |line|
+      stdout.lines.filter_map do |line|
         # Encoder lines look like:  V..... libx264               ...
         # Skip the header and metadata lines.
         next unless line =~ /\A [\sVAS\.][\sFSXBD\.]{5}\s+(\S+)/

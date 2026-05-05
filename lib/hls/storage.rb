@@ -85,7 +85,7 @@ module HLS
       end
 
       def object(key)
-        Object.new(store: @store, mutex: @mutex, key: key)
+        Object.new(store: @store, mutex: @mutex, key: key, signing_ttl: @signing_ttl)
       end
 
       def keys
@@ -95,10 +95,11 @@ module HLS
       class Object
         attr_reader :key
 
-        def initialize(store:, mutex:, key:)
+        def initialize(store:, mutex:, key:, signing_ttl:)
           @store = store
           @mutex = mutex
           @key = key
+          @signing_ttl = signing_ttl
         end
 
         def get
@@ -119,7 +120,7 @@ module HLS
           PutResponse.new(etag: %("#{Digest::MD5.hexdigest(body_str)}"))
         end
 
-        def presigned_url(_verb = :get, expires_in: 3600, **_)
+        def presigned_url(_verb = :get, expires_in: @signing_ttl, **_)
           "memory://#{@key}?expires_in=#{expires_in}"
         end
       end

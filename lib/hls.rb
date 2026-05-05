@@ -8,10 +8,14 @@ module HLS
   class Error < StandardError; end
 
   class << self
-    # The Aws::S3::Resource the gem uses when a profile's `bucket` is
-    # configured as a string name. Set in `config/initializers/hls.rb`:
+    # The Aws::S3::Resource the gem uses when an HLS::Storage::S3
+    # adapter is configured by `bucket_name:` (and resolves the bucket
+    # lazily through this resource). Set in `config/initializers/hls.rb`:
     #
     #   HLS.s3_resource = Aws::S3::Resource.new(...)
+    #
+    # Storage::S3 instances may also pass `s3_resource:` directly to
+    # bypass this default.
     attr_writer :s3_resource
 
     def s3_resource
