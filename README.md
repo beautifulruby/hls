@@ -1,57 +1,52 @@
 # HLS
 
-If your videos already live in your S3 bucket, this gem is the cheaper
-alternative to a second vendor.
+A cockroach for video hosting. Cheap to run, hard to kill, serves
+high-quality streams out of the S3 bucket you already pay for.
 
-For the [Phlex on Rails course](https://beautifulruby.com/phlex) I
-needed multi-bitrate streaming for a few hundred lectures. Mux would
-have worked, but it meant a second bill, a second SDK, a second
-dashboard, a second place credentials rotate, a second on-call channel
-when something breaks — for content that already sits next to my other
-course assets in Tigris. So instead this gem wraps `ffmpeg` to encode
-the source into [HLS](https://en.wikipedia.org/wiki/HTTP_Live_Streaming)
-(multi-bitrate, segmented for adaptive streaming), generates
-pre-signed URLs for every segment, and gives you a small Rails seam to
-serve them — all without leaving the bucket and credentials you
-already manage.
+I built this for the [Phlex on Rails course](https://beautifulruby.com/phlex).
+The lectures were already in Tigris with the rest of the course
+assets. I tried serving them as plain `.mp4` files first, but viewers
+in Brazil reported the videos were slow, so I switched to HLS. Mux
+would have handled the encoding, but adding it meant another monthly
+bill, another SDK, another dashboard, and another set of credentials
+to rotate. The gem does the same job with `ffmpeg` and pre-signed
+URLs.
 
-That's the whole pitch. No hosted player, no analytics service, no
-separate billing. Just `ffmpeg` plumbing and a manifest helper, sized
-to fit a course site or any content-heavy app where "add another SaaS"
-is the wrong answer.
+The output is the encoded HLS files in your bucket and the URLs to
+serve them. No hosted player, no analytics, no extra billing.
 
 ## What you get
 
-- **ffmpeg multi-rendition encoding with sane defaults.** Codec
-  auto-selection per host (videotoolbox on macOS, NVENC/QSV on Linux
-  GPUs, libx264 fallback), GOP aligned to segment boundaries so seeks
-  don't stall, and a bitrate ladder scaled from the source dimensions.
-- **Pre-signed URLs baked into the playlists you serve.** The player
-  fetches segments directly from the bucket; your app server never
-  proxies bytes.
-- **Idempotent re-runs.** A re-encode is a no-op unless the input
-  bytes or the profile config actually changed.
-- **Rails integration.** Autoloaded profile classes under
-  `app/videos/`, an `HLS::EncodeJob` ActiveJob wrapper, and
-  `bin/rails g hls:install` / `hls:video` generators that scaffold
-  the whole thing.
+- ffmpeg multi-rendition encoding with reasonable defaults: codec
+  auto-selection per host (videotoolbox on macOS, NVENC or QSV on
+  Linux GPUs, libx264 otherwise), GOP aligned to segment boundaries
+  so seeking works, bitrate ladder scaled from the source dimensions.
+- Pre-signed URLs in the playlists you serve. The player fetches
+  segments directly from the bucket. Your app server never proxies
+  bytes.
+- Idempotent re-runs. A second `process` call is a no-op unless the
+  input bytes or the profile config changed.
+- Rails integration. Profile classes under `app/videos/` are
+  autoloaded. `HLS::EncodeJob` runs the pipeline as an ActiveJob.
+  `bin/rails g hls:install` and `bin/rails g hls:video NAME` scaffold
+  the wiring.
 
 ## What it's not
 
-A replacement for Mux, Bitmovin, or any other hosted video service —
-those give you a managed CDN, viewer analytics, and a player UI in
-one bundle. This gives you the encoded files in your own bucket and
-the URLs to serve them. Bring your own player (`hls.js`, native iOS
-Safari) and your own CDN if you want one in front of the bucket.
+This is not a replacement for Mux, Bitmovin, or any hosted video
+service. Those bundle a managed CDN, viewer analytics, and a player.
+This gem produces the encoded files in your bucket and the URLs that
+point at them. Bring your own player (`hls.js`, or native iOS Safari)
+and your own CDN if you want one.
 
 ## A note on construction
 
-I wrote most of this with an LLM in June 2025 — early ChatGPT plus
-the first generation of Claude agents — and have continued iterating
-the same way since. Wrapping `ffmpeg` flags and generating pre-signed
-URLs is exactly the kind of mechanical glue where that helps. The
-codebase is small (`lib/hls/` is under 2k lines) and worth reading if
-you want to verify what it does before you depend on it.
+I wrote most of this with an LLM in June 2025, using early ChatGPT
+and the first generation of Claude agents. I've kept iterating the
+same way since. Wrapping ffmpeg flags and generating pre-signed URLs
+is mechanical work that benefits from a coding model. The codebase
+is small (`lib/hls/` is under 2k lines), so you can audit it directly
+before depending on it.
 
 ## Requirements
 
@@ -116,7 +111,7 @@ HLS.s3_resource = Aws::S3::Resource.new(
   region:            "auto"
 )
 
-# app/videos/application_video.rb — bucket + signing TTL live on the
+# app/videos/application_video.rb. Bucket and signing TTL live on the
 # storage adapter, configured here so every subclass under app/videos
 # inherits them. Override `def self.storage` on a subclass to point
 # at a different bucket.
@@ -249,7 +244,7 @@ every Zeitwerk reload, override the reader (`def self.storage = ...`).
 
 | Setting              | Default              | Notes |
 |----------------------|----------------------|-------|
-| `storage`            | _none — required_    | `HLS::Storage::S3`, `HLS::Storage::Memory`, or any conforming adapter |
+| `storage`            | _none, required_     | `HLS::Storage::S3`, `HLS::Storage::Memory`, or any conforming adapter |
 | `segment_duration`   | `4`                  | HLS segment length, seconds |
 | `video_codec`        | `:h264`              | Symbol (auto-resolved) or string (explicit) |
 | `audio_codec`        | `"aac"`              | |
@@ -324,14 +319,14 @@ Events:
 The default backend is `HLS::Storage::S3`, which wraps an
 `Aws::S3::Bucket` (works with AWS S3, Tigris, Cloudflare R2, MinIO).
 `HLS::Storage::Memory` ships as a no-network adapter useful for tests.
-Roll your own by implementing the protocol — `signing_ttl` plus
+Roll your own by implementing the protocol: `signing_ttl` plus
 `object(key)` returning something that responds to `get`,
 `put(body:, content_type:, cache_control:)`, and
 `presigned_url(:get, expires_in:)`.
 
 #### MinIO
 
-MinIO is API-compatible with S3 — point `HLS.s3_resource` at its
+MinIO is API-compatible with S3, so point `HLS.s3_resource` at its
 endpoint:
 
 ```ruby
@@ -353,8 +348,8 @@ class ApplicationVideo < HLS::ApplicationVideo
 end
 ```
 
-`force_path_style: true` is the key MinIO requirement — MinIO doesn't
-do virtual-hosted-style addressing.
+`force_path_style: true` is the key MinIO requirement, since MinIO
+doesn't do virtual-hosted-style addressing.
 
 ## Development
 
