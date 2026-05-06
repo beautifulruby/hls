@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`config_digest` now sorts hash keys before SHA256ing the payload.**
+  The serialized form is stable across Ruby versions and hash insertion
+  order. *One-time effect on existing deployments:* the next `process`
+  run will re-encode every video once, since previously-recorded
+  digests no longer match the new representation. Subsequent runs are
+  no-ops as before.
+
 - **`HLS::Cache` groups the playlist cache backend with its TTL.** The
   separate `manifest_cache` + `manifest_cache_ttl` class settings (and
   the `cache_ttl:` kwarg on `HLS::Manifest.new`) are gone. Configure
@@ -44,6 +51,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separate initializer. Settings live on the profile classes directly
   (Zeitwerk reloads handle dev-mode freshness). Initializers shrink to
   one line: `HLS.s3_resource = Aws::S3::Resource.new(...)`.
+
+### Added
+
+- **`HLS::EncodeJob` retry policy.** `discard_on` for `HLS::Lock::Busy`
+  (another worker is doing it) and `HLS::State::CorruptError` (operator
+  intervention required) — both are poison messages that ActiveJob's
+  default retry-everything-five-times behavior wastes work on. Other
+  errors continue to follow the host app's default retry policy.
+
+### Removed
+
+- **Dropped `parallel` and `bigdecimal` gem dependencies.** Neither was
+  used in `lib/`. The Uploader does its own bounded threading via
+  `Queue` + `Thread.new`, and nothing in the gem touches BigDecimal.
 
 ### Added
 

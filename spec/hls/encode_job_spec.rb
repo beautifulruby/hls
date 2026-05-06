@@ -87,11 +87,30 @@ RSpec.describe HLS::EncodeJob do
     }.to raise_error(HLS::Error, "ffmpeg blew up")
   end
 
-  it "propagates HLS::Lock::Busy so a competing worker doesn't silently succeed" do
+  it "discards on HLS::Lock::Busy — another worker is doing the work, retrying is pointless" do
     profile_class
 
     fake_profile = double("profile_instance")
     allow(fake_profile).to receive(:process).and_raise(HLS::Lock::Busy, "another worker is encoding")
+    allow(TestProfileForJob).to receive(:new).and_return(fake_profile)
+
+    # discard_on swallows the error and exits the job cleanly. The
+    # competing worker will release the lock when done; if a caller
+    # cares to verify, they can re-enqueue.
+    expect {
+      described_class.perform_now(
+        profile: "TestProfileForJob",
+        input: "/tmp/source.mp4",
+        output: "/tmp/out"
+      )
+    }.not_to raise_error
+  end
+
+  it "discards on HLS::State::CorruptError — operator intervention required, not a retry case" do
+    profile_class
+
+    fake_profile = double("profile_instance")
+    allow(fake_profile).to receive(:process).and_raise(HLS::State::CorruptError, "state.json malformed")
     allow(TestProfileForJob).to receive(:new).and_return(fake_profile)
 
     expect {
@@ -100,7 +119,7 @@ RSpec.describe HLS::EncodeJob do
         input: "/tmp/source.mp4",
         output: "/tmp/out"
       )
-    }.to raise_error(HLS::Lock::Busy)
+    }.not_to raise_error
   end
 
   it "enqueues correctly via perform_later" do

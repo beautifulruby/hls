@@ -231,6 +231,21 @@ optional `s3_resource:` (defaults to `HLS.s3_resource`). For tests or
 non-AWS backends, use `HLS::Storage::Memory.new(name: ...)` or any
 object responding to `signing_ttl` and `object(key)`.
 
+`HLS.s3_resource` is process-global. If two profiles need different
+SDK clients (different regions, credentials, or endpoints), pass
+`s3_resource:` directly to each `HLS::Storage::S3` rather than relying
+on the global default:
+
+```ruby
+class CourseVideo < ApplicationVideo
+  def self.storage = HLS::Storage::S3.new(
+    s3_resource: Aws::S3::Resource.new(region: "us-west-2", ...),
+    bucket_name: "course-videos",
+    signing_ttl: 1.hour
+  )
+end
+```
+
 ### Concurrency and retries
 
 The uploader runs PUTs in parallel with bounded concurrency and retries

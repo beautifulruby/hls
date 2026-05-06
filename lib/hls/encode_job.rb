@@ -18,6 +18,18 @@ module HLS
   class EncodeJob < ActiveJob::Base
     queue_as { ENV.fetch("HLS_QUEUE", "default") }
 
+    # Another worker is encoding the same output dir. Retrying just
+    # means we'll bump heads with them again — the lock is released
+    # exactly when their work finishes, and at that point the state
+    # sidecar will say `encoded?`, so the original caller can simply
+    # re-enqueue if they care to verify.
+    discard_on HLS::Lock::Busy
+
+    # Malformed state.json is operator-intervention territory: retrying
+    # silently re-runs the encode and re-corrupts. Surface it to the
+    # dead-letter queue so someone notices.
+    discard_on HLS::State::CorruptError
+
     def perform(profile:, input:, output:, key_prefix: nil)
       profile_class = profile.is_a?(Class) ? profile : profile.constantize
       input_obj = input.is_a?(HLS::Input) ? input : HLS::Input.new(input)

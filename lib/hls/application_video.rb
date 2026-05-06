@@ -412,15 +412,20 @@ module HLS
     # (`storage`, `cache`, `ffmpeg_timeout`, `variant_uri`).
     def config_digest
       @config_digest ||= begin
+        # Sort keys at every level so the serialized form is stable
+        # regardless of insertion order or JSON.generate's
+        # implementation. Without this, a future Ruby tweak to hash
+        # ordering would invalidate every previously-recorded digest
+        # and trigger a spurious re-encode of every video at once.
         payload = {
-          segment_duration: self.class.segment_duration,
-          video_codec:      self.class.video_codec.to_s,
-          audio_codec:      self.class.audio_codec,
           audio_bitrate:    self.class.audio_bitrate,
+          audio_codec:      self.class.audio_codec,
           bits_per_pixel:   self.class.bits_per_pixel,
           max_bitrate_kbps: self.class.max_bitrate_kbps,
-          renditions:       self.class.renditions.map(&:to_h),
-          posters:          self.class.posters.map(&:to_h)
+          posters:          self.class.posters.map { |p| p.to_h.sort.to_h },
+          renditions:       self.class.renditions.map { |r| r.to_h.sort.to_h },
+          segment_duration: self.class.segment_duration,
+          video_codec:      self.class.video_codec.to_s
         }
         "sha256:#{Digest::SHA256.hexdigest(JSON.generate(payload))}"
       end

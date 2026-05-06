@@ -32,12 +32,6 @@ Gem::Specification.new do |spec|
   spec.executables = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
   spec.require_paths = ["lib"]
 
-  # Uncomment to register a new dependency of your gem
-  spec.add_dependency "bigdecimal", "~> 3.0"
   spec.add_dependency "m3u8", "~> 0.8.0"
-  spec.add_dependency "parallel", "~> 1.0"
   spec.add_dependency "aws-sdk-s3", "~> 1.0"
-
-  # For more information and examples about making a new gem, check out our
-  # guide at: https://bundler.io/guides/creating_gem.html
 end
