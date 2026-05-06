@@ -1,24 +1,40 @@
 # HLS
 
-When I started working on the [Phlex on Rails video course](https://beautifulruby.com/phlex), I tried streaming mp4 files from an S3 compatible object store and quickly found out from users they were running into issues watching the video. I added to use [HLS](https://en.wikipedia.org/wiki/HTTP_Live_Streaming), but I quickly found out it's a bit of a pain setting that up on a private object store.
+Viewers don't tell you they're buffering. They just leave.
 
-## Why?
+Streaming an `.mp4` from a private S3 bucket is one long sequential
+download. The moment a viewer's bandwidth dips below the file's
+bitrate the player stalls — and your analytics show a drop-off, not
+a complaint. [HLS](https://en.wikipedia.org/wiki/HTTP_Live_Streaming)
+solves this by encoding the source into several renditions split into
+short segments, and letting the player switch between them on the
+fly as conditions change.
 
-Creating & serving HLS videos from private object stores is tricky.
+The pain is plumbing. A multi-rendition `ffmpeg` invocation is flag
+soup, and serving the result from a private bucket means generating
+pre-signed URLs for every segment of every variant playlist on every
+request. This gem is that plumbing — sensible encode defaults, signed
+playlists out of the box, and a Rails integration that scaffolds in
+one command.
 
-### Sane encoding defaults
+Built for [Phlex on Rails](https://beautifulruby.com/phlex), where
+the drop-off pattern was hitting my own course traffic.
 
-When you encode a video into HLS format, it cranks out different resolutions and bitrates that play on everything from mobile phones to TVs. You give it an input video and it writes out all the chunks into a directory.
+## What you get
 
-### Generates pre-signed URLs in m3u8 playlists
-
-The most annoying part about serving HLS videos from private object stores is generating pre-signed URLs for each chunk. This gem generates pre-signed URLs for each chunk in the m3u8 playlist, making it easy to serve HLS videos from private object stores.
-
-### Rails integration
-
-A Railtie autoloads `app/videos/*.rb` profile classes, wires app-wide
-defaults from `config/initializers/hls.rb`, and ships an
-`HLS::EncodeJob` ActiveJob wrapper for queue-driven encoding.
+- **ffmpeg multi-rendition encoding with sane defaults.** Codec
+  auto-selection per host (videotoolbox on macOS, NVENC/QSV on Linux
+  GPUs, libx264 fallback), GOP aligned to segment boundaries so seeks
+  don't stall, and a bitrate ladder scaled from the source dimensions.
+- **Pre-signed URLs baked into the playlists you serve.** The player
+  fetches segments directly from the bucket; your app server never
+  proxies bytes.
+- **Idempotent re-runs.** A re-encode is a no-op unless the input
+  bytes or the profile config actually changed.
+- **Rails integration.** Autoloaded profile classes under
+  `app/videos/`, an `HLS::EncodeJob` ActiveJob wrapper, and
+  `bin/rails g hls:install` / `hls:video` generators that scaffold
+  the whole thing.
 
 ## Requirements
 
