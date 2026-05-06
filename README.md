@@ -1,24 +1,24 @@
 # HLS
 
-Viewers don't tell you they're buffering. They just leave.
+If your videos already live in your S3 bucket, this gem is the cheaper
+alternative to a second vendor.
 
-Streaming an `.mp4` from a private S3 bucket is one long sequential
-download. The moment a viewer's bandwidth dips below the file's
-bitrate the player stalls — and your analytics show a drop-off, not
-a complaint. [HLS](https://en.wikipedia.org/wiki/HTTP_Live_Streaming)
-solves this by encoding the source into several renditions split into
-short segments, and letting the player switch between them on the
-fly as conditions change.
+For the [Phlex on Rails course](https://beautifulruby.com/phlex) I
+needed multi-bitrate streaming for a few hundred lectures. Mux would
+have worked, but it meant a second bill, a second SDK, a second
+dashboard, a second place credentials rotate, a second on-call channel
+when something breaks — for content that already sits next to my other
+course assets in Tigris. So instead this gem wraps `ffmpeg` to encode
+the source into [HLS](https://en.wikipedia.org/wiki/HTTP_Live_Streaming)
+(multi-bitrate, segmented for adaptive streaming), generates
+pre-signed URLs for every segment, and gives you a small Rails seam to
+serve them — all without leaving the bucket and credentials you
+already manage.
 
-The pain is plumbing. A multi-rendition `ffmpeg` invocation is flag
-soup, and serving the result from a private bucket means generating
-pre-signed URLs for every segment of every variant playlist on every
-request. This gem is that plumbing — sensible encode defaults, signed
-playlists out of the box, and a Rails integration that scaffolds in
-one command.
-
-Built for [Phlex on Rails](https://beautifulruby.com/phlex), where
-the drop-off pattern was hitting my own course traffic.
+That's the whole pitch. No hosted player, no analytics service, no
+separate billing. Just `ffmpeg` plumbing and a manifest helper, sized
+to fit a course site or any content-heavy app where "add another SaaS"
+is the wrong answer.
 
 ## What you get
 
@@ -35,6 +35,23 @@ the drop-off pattern was hitting my own course traffic.
   `app/videos/`, an `HLS::EncodeJob` ActiveJob wrapper, and
   `bin/rails g hls:install` / `hls:video` generators that scaffold
   the whole thing.
+
+## What it's not
+
+A replacement for Mux, Bitmovin, or any other hosted video service —
+those give you a managed CDN, viewer analytics, and a player UI in
+one bundle. This gives you the encoded files in your own bucket and
+the URLs to serve them. Bring your own player (`hls.js`, native iOS
+Safari) and your own CDN if you want one in front of the bucket.
+
+## A note on construction
+
+I wrote most of this with an LLM in June 2025 — early ChatGPT plus
+the first generation of Claude agents — and have continued iterating
+the same way since. Wrapping `ffmpeg` flags and generating pre-signed
+URLs is exactly the kind of mechanical glue where that helps. The
+codebase is small (`lib/hls/` is under 2k lines) and worth reading if
+you want to verify what it does before you depend on it.
 
 ## Requirements
 
