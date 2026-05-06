@@ -55,8 +55,10 @@ lib/hls/codecs.rb               Logical → explicit codec resolution per host
 lib/hls/input.rb                ffprobe wrapper (Open3, raises on failure)
 lib/hls/directory.rb            Source-walking helper for batch encoding scripts
 lib/hls/testing.rb              Public RSpec helpers + matcher (only when RSpec defined)
-lib/hls/railtie.rb              Autoloads app/videos/, applies config.hls defaults
+lib/hls/railtie.rb              Autoloads app/videos/ + lazy-loads EncodeJob
 lib/hls/encode_job.rb           ActiveJob wrapper around profile.process
+lib/hls/cache.rb                Wraps a Rails.cache-shaped backend with a TTL
+lib/hls/storage.rb              Storage protocol + S3 default + Memory adapter
 
 lib/generators/hls/install/     `bin/rails g hls:install` — initializer + ApplicationVideo
 lib/generators/hls/video/       `bin/rails g hls:video NAME` — per-content-type profile
@@ -91,9 +93,13 @@ End-to-end specs that shell out to ffmpeg live under `spec/integration/`.
    bounded retries on transient errors. Records etag back into state.
 
 Idempotency is enforced at two levels:
-- **Encode level**: skipped when the input's SHA256 digest matches
-  what's recorded in state.json AND the master playlist file actually
-  exists. Both checks are necessary — see "Common gotchas" below.
+- **Encode level**: skipped when *all three* hold — the input's
+  SHA256 digest matches state.json, the `config_digest` (SHA256 of
+  encode-affecting profile config) matches state.json, AND the master
+  playlist file actually exists on disk. Bumping `audio_bitrate` or
+  adding a rendition flips `config_digest` and forces a re-encode
+  even on a byte-identical input. See "Common gotchas" below for the
+  disk-existence rationale.
 - **Upload level**: per-file MD5 compared to recorded digest.
 
 ## Class-level DSL pattern
@@ -106,9 +112,12 @@ The pattern: each setting is a singleton method that reads with no
 args, writes with one. Reads walk the class hierarchy via `superclass`
 until they find a set value or hit the default.
 
-`renditions` and `posters` accumulate into per-class arrays. The
-`inherited` callback dups parent declarations into subclasses, so
-subclass mutations don't leak back to the parent.
+`renditions` and `posters` accumulate into per-class arrays.
+Subclass inheritance is lazy — on first access in a subclass, the
+reader copies the parent's array (`@renditions ||= superclass...dup`).
+No `inherited` callback reaching into the subclass's ivars from
+outside; subclass mutations don't leak back to the parent because
+each subclass holds its own array.
 
 Avoid the temptation to swap this for `class_attribute` unless we
 later decide to take a hard dep on activesupport. Right now the gem's
@@ -240,12 +249,14 @@ but the upload step would try to walk an empty directory. The fix
 the master playlist is on disk. Keep this dual check — there's a test
 for it.
 
-### Empty-string buckets
+### Empty / missing bucket name
 
-`ENV.fetch("VIDEO_S3_BUCKET_NAME", "")` returns `""` when the env var
-is missing. Empty string is truthy in Ruby. `resolve_bucket` treats
-both `nil` and `""` as "no bucket configured" and raises. Don't
-add another path that bypasses this check.
+`HLS::Storage::S3.new(bucket_name: nil)` is fine at construction —
+the bucket is resolved lazily on first object access. The check
+lives in `Storage::S3#bucket`: empty string and nil both raise
+`ArgumentError` with "needs either a bucket_name or a pre-built
+bucket". Don't bypass this — silent acceptance of an empty bucket
+name leads to obscure failures deep in the AWS SDK.
 
 ### No Rails config bag, no load hook
 
@@ -321,13 +332,14 @@ patterns are all skipped by the uploader.
 
 ### Storage protocol is duck-typed
 
-`bucket` accepts anything responding to `object(key)` whose return
-value implements `get` / `put(body:, content_type:, cache_control:)` /
-`presigned_url(:get, expires_in:)`. The `Aws::S3::Bucket` already
-matches; `HLS::Storage::Memory` is a test double; anything else is the
-host app's responsibility. `resolve_bucket` returns duck-typed buckets
-unchanged — it only special-cases String (via `HLS.s3_resource`) and
-Aws::S3::Bucket (passthrough).
+`storage` is any object responding to `signing_ttl` and `object(key)`,
+where `object(key)` returns something that implements `get` /
+`put(body:, content_type:, cache_control:)` / `presigned_url(:get,
+expires_in:)`. `HLS::Storage::S3` wraps an `Aws::S3::Bucket`;
+`HLS::Storage::Memory` is the in-process test/dev adapter; anything
+else is the host app's responsibility. `Manifest` and `Uploader`
+only ever talk through this protocol — they don't know whether the
+backend is S3, in-memory, or something else.
 
 ## Running tests
 
@@ -363,9 +375,15 @@ Edit `lib/hls/codecs.rb`:
 ### A new class-level setting
 
 Add `class_setting :name, default: ...` near the bottom of the class
-body in `application_video.rb`. If host apps should be able to
-override it via `config.hls.name = ...`, add a corresponding line in
-the Railtie's `apply_config` initializer.
+body in `application_video.rb`. The setting is automatically
+inheritable through the profile class hierarchy — no Railtie work
+needed. Host apps configure it directly on their profile classes
+(either `name value` form or `def self.name = ...` for lazy
+resolution from env vars).
+
+If the new setting also affects encoded output bytes, add it to the
+`config_digest` payload in `ApplicationVideo#config_digest` so a
+change forces a re-encode.
 
 ### A new ffmpeg arg in the encode command
 
